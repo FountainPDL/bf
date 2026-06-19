@@ -10,11 +10,11 @@ import java.nio.ShortBuffer;
 /** A single unit voxel block (cube), Phase 1 placeholder for the future block registry. */
 public class VoxelCube {
 
-    private static final float S = 0.9f;
+    public static final float SIZE = 0.9f;
 
     private static final float[] VERTICES = {
-            -S, 0,    -S,   S, 0,    -S,   S, 2 * S, -S,  -S, 2 * S, -S,
-            -S, 0,     S,   S, 0,     S,   S, 2 * S,  S,  -S, 2 * S,  S,
+            -SIZE, 0,        -SIZE,   SIZE, 0,        -SIZE,   SIZE, 2 * SIZE, -SIZE,  -SIZE, 2 * SIZE, -SIZE,
+            -SIZE, 0,         SIZE,   SIZE, 0,         SIZE,   SIZE, 2 * SIZE,  SIZE,  -SIZE, 2 * SIZE,  SIZE,
     };
 
     private static final short[] INDICES = {

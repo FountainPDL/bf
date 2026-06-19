@@ -5,13 +5,15 @@ import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
 import android.opengl.Matrix;
 
+import java.util.Arrays;
+
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
 /**
- * Phase 1 renderer: proves the OpenGL ES pipeline end-to-end.
- * Renders a flat grid of voxel blocks with a joystick-driven flying camera.
- * This is the foundation Phase 2 (chunked world, collision, shooting) builds on.
+ * Phase 2 renderer: adds look-around (yaw/pitch from touch drag), movement
+ * relative to facing direction, and a simple raymarched "shoot" that breaks
+ * the block you're aiming at — the seed of the future weapon system.
  */
 public class GameRenderer implements GLSurfaceView.Renderer {
 
@@ -33,6 +35,11 @@ public class GameRenderer implements GLSurfaceView.Renderer {
             "}";
 
     private static final int GRID_SIZE = 12;
+    private static final float MOVE_SPEED = 0.15f;
+    private static final float LOOK_SENSITIVITY = 0.0025f;
+    private static final float PITCH_LIMIT = (float) Math.toRadians(85);
+    private static final float SHOOT_STEP = 0.1f;
+    private static final float SHOOT_MAX_DIST = 40f;
 
     private int program;
     private VoxelCube cube;
@@ -44,16 +51,61 @@ public class GameRenderer implements GLSurfaceView.Renderer {
     private final float[] mvpMatrix = new float[16];
 
     private float camX = 0f, camY = 4f, camZ = 10f;
+    private volatile float yaw = 0f;
+    private volatile float pitch = 0f;
 
     private volatile float moveDx = 0f, moveDz = 0f;
 
+    private final boolean[][] blockExists = new boolean[GRID_SIZE * 2][GRID_SIZE * 2];
+
     public GameRenderer(Context context) {
-        // context reserved for Phase 2 (texture/asset loading)
+        for (boolean[] row : blockExists) {
+            Arrays.fill(row, true);
+        }
     }
 
     public void setMoveInput(float dx, float dy) {
         this.moveDx = dx;
         this.moveDz = dy;
+    }
+
+    /** Called from the UI thread by the look-drag surface. */
+    public void addLookDelta(float dxPixels, float dyPixels) {
+        yaw += dxPixels * LOOK_SENSITIVITY;
+        pitch -= dyPixels * LOOK_SENSITIVITY;
+        if (pitch > PITCH_LIMIT) pitch = PITCH_LIMIT;
+        if (pitch < -PITCH_LIMIT) pitch = -PITCH_LIMIT;
+    }
+
+    /** Call via glSurfaceView.queueEvent() so this runs safely on the GL thread. */
+    public void tryShoot() {
+        float cosPitch = (float) Math.cos(pitch);
+        float dirX = (float) Math.sin(yaw) * cosPitch;
+        float dirY = (float) Math.sin(pitch);
+        float dirZ = (float) -Math.cos(yaw) * cosPitch;
+
+        for (float t = 0.5f; t < SHOOT_MAX_DIST; t += SHOOT_STEP) {
+            float px = camX + dirX * t;
+            float py = camY + dirY * t;
+            float pz = camZ + dirZ * t;
+
+            if (py < 0f || py > 2f * VoxelCube.SIZE) continue;
+
+            int gx = Math.round(px / 2f);
+            int gz = Math.round(pz / 2f);
+            if (gx < -GRID_SIZE || gx >= GRID_SIZE || gz < -GRID_SIZE || gz >= GRID_SIZE) continue;
+
+            int ix = gx + GRID_SIZE;
+            int iz = gz + GRID_SIZE;
+            if (!blockExists[ix][iz]) continue;
+
+            float localX = px - gx * 2f;
+            float localZ = pz - gz * 2f;
+            if (Math.abs(localX) < VoxelCube.SIZE && Math.abs(localZ) < VoxelCube.SIZE) {
+                blockExists[ix][iz] = false;
+                return;
+            }
+        }
     }
 
     @Override
@@ -83,12 +135,28 @@ public class GameRenderer implements GLSurfaceView.Renderer {
     public void onDrawFrame(GL10 gl) {
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
 
-        camX += moveDx * 0.15f;
-        camZ += moveDz * 0.15f;
+        float yawNow = yaw;
+        float pitchNow = pitch;
+
+        float moveForwardX = (float) Math.sin(yawNow);
+        float moveForwardZ = (float) -Math.cos(yawNow);
+        float moveRightX = (float) Math.cos(yawNow);
+        float moveRightZ = (float) Math.sin(yawNow);
+
+        float forwardAmount = -moveDz;
+        float strafeAmount = moveDx;
+
+        camX += (moveForwardX * forwardAmount + moveRightX * strafeAmount) * MOVE_SPEED;
+        camZ += (moveForwardZ * forwardAmount + moveRightZ * strafeAmount) * MOVE_SPEED;
+
+        float cosPitch = (float) Math.cos(pitchNow);
+        float lookDirX = (float) Math.sin(yawNow) * cosPitch;
+        float lookDirY = (float) Math.sin(pitchNow);
+        float lookDirZ = (float) -Math.cos(yawNow) * cosPitch;
 
         Matrix.setLookAtM(viewMatrix, 0,
                 camX, camY, camZ,
-                camX, camY - 0.3f, camZ - 5f,
+                camX + lookDirX, camY + lookDirY, camZ + lookDirZ,
                 0f, 1f, 0f);
         Matrix.multiplyMM(vpMatrix, 0, projectionMatrix, 0, viewMatrix, 0);
 
@@ -96,6 +164,7 @@ public class GameRenderer implements GLSurfaceView.Renderer {
 
         for (int x = -GRID_SIZE; x < GRID_SIZE; x++) {
             for (int z = -GRID_SIZE; z < GRID_SIZE; z++) {
+                if (!blockExists[x + GRID_SIZE][z + GRID_SIZE]) continue;
                 Matrix.setIdentityM(modelMatrix, 0);
                 Matrix.translateM(modelMatrix, 0, x * 2f, 0f, z * 2f);
                 Matrix.multiplyMM(mvpMatrix, 0, vpMatrix, 0, modelMatrix, 0);

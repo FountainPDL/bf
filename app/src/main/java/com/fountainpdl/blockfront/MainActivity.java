@@ -1,12 +1,14 @@
 package com.fountainpdl.blockfront;
 
 import android.app.Activity;
+import android.graphics.Color;
 import android.opengl.GLSurfaceView;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
+import android.widget.TextView;
 
 public class MainActivity extends Activity {
 
@@ -25,9 +27,26 @@ public class MainActivity extends Activity {
         gameRenderer = new GameRenderer(this);
         glSurfaceView.setRenderer(gameRenderer);
         glSurfaceView.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
-
         root.addView(glSurfaceView, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+        // Full-screen drag-to-look. Sits above the GL surface but below the
+        // joystick/fire button, so those corners keep their own touches.
+        LookSurfaceView lookSurface = new LookSurfaceView(this);
+        lookSurface.setOnLookListener((dx, dy) -> gameRenderer.addLookDelta(dx, dy));
+        root.addView(lookSurface, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+        TextView crosshair = new TextView(this);
+        crosshair.setText("+");
+        crosshair.setTextColor(Color.argb(220, 255, 255, 255));
+        crosshair.setTextSize(22f);
+        crosshair.setClickable(false);
+        crosshair.setFocusable(false);
+        FrameLayout.LayoutParams crosshairParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        crosshairParams.gravity = Gravity.CENTER;
+        root.addView(crosshair, crosshairParams);
 
         TouchJoystick moveStick = new TouchJoystick(this);
         FrameLayout.LayoutParams stickParams = new FrameLayout.LayoutParams(280, 280);
@@ -36,6 +55,14 @@ public class MainActivity extends Activity {
         moveStick.setLayoutParams(stickParams);
         moveStick.setOnMoveListener((dx, dy) -> gameRenderer.setMoveInput(dx, dy));
         root.addView(moveStick);
+
+        FireButton fireButton = new FireButton(this);
+        FrameLayout.LayoutParams fireParams = new FrameLayout.LayoutParams(170, 170);
+        fireParams.gravity = Gravity.BOTTOM | Gravity.END;
+        fireParams.setMargins(0, 0, 40, 40);
+        fireButton.setLayoutParams(fireParams);
+        fireButton.setOnFireListener(() -> glSurfaceView.queueEvent(() -> gameRenderer.tryShoot()));
+        root.addView(fireButton);
 
         setContentView(root);
     }
