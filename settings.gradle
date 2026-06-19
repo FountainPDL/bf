@@ -1,0 +1,2 @@
+rootProject.name = "BlockFront"
+include ':app'
