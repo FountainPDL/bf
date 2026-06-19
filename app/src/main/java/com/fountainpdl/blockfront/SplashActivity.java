@@ -1,14 +1,14 @@
 package com.fountainpdl.blockfront;
 
+import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
 import android.view.WindowManager;
-import androidx.appcompat.app.AppCompatActivity;
 
-public class SplashActivity extends AppCompatActivity {
+public class SplashActivity extends Activity {
 
     private static final long SPLASH_DURATION_MS = 1800;
 

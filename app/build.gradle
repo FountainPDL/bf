@@ -29,5 +29,6 @@ android {
 }
 
 dependencies {
-    implementation 'androidx.appcompat:appcompat:1.7.0'
+    // No androidx.appcompat — we don't use any AppCompat-only features,
+    // and it was dragging in a conflicting kotlin-stdlib version.
 }

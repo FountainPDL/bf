@@ -1,14 +1,14 @@
 package com.fountainpdl.blockfront;
 
+import android.app.Activity;
 import android.opengl.GLSurfaceView;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
-import androidx.appcompat.app.AppCompatActivity;
 
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends Activity {
 
     private GLSurfaceView glSurfaceView;
     private GameRenderer gameRenderer;
