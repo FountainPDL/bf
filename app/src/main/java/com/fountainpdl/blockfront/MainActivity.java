@@ -4,17 +4,24 @@ import android.app.Activity;
 import android.graphics.Color;
 import android.opengl.GLSurfaceView;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
-import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 
 public class MainActivity extends Activity {
 
+    private static final long HUD_POLL_MS = 80;
+
     private GLSurfaceView glSurfaceView;
     private GameRenderer gameRenderer;
+    private CrosshairView crosshair;
+    private TextView ammoText;
+    private final Handler hudHandler = new Handler(Looper.getMainLooper());
+    private Runnable hudPoller;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -31,21 +38,13 @@ public class MainActivity extends Activity {
         root.addView(glSurfaceView, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
-        // Full-screen drag-to-look. Sits above the GL surface but below the
-        // joystick/fire/view buttons, so those corners keep their own touches.
         LookSurfaceView lookSurface = new LookSurfaceView(this);
         lookSurface.setOnLookListener((dx, dy) -> gameRenderer.addLookDelta(dx, dy));
         root.addView(lookSurface, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
-        TextView crosshair = new TextView(this);
-        crosshair.setText("+");
-        crosshair.setTextColor(Color.argb(220, 255, 255, 255));
-        crosshair.setTextSize(22f);
-        crosshair.setClickable(false);
-        crosshair.setFocusable(false);
-        FrameLayout.LayoutParams crosshairParams = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        crosshair = new CrosshairView(this);
+        FrameLayout.LayoutParams crosshairParams = new FrameLayout.LayoutParams(64, 64);
         crosshairParams.gravity = Gravity.CENTER;
         root.addView(crosshair, crosshairParams);
 
@@ -65,20 +64,37 @@ public class MainActivity extends Activity {
         fireButton.setOnFireListener(() -> glSurfaceView.queueEvent(() -> gameRenderer.tryShoot()));
         root.addView(fireButton);
 
-        Button viewToggle = new Button(this);
-        viewToggle.setText("VIEW");
-        viewToggle.setAllCaps(true);
-        viewToggle.setTextColor(Color.WHITE);
-        viewToggle.setBackgroundColor(Color.argb(150, 24, 24, 24));
-        viewToggle.setOnClickListener(v -> glSurfaceView.queueEvent(() -> gameRenderer.toggleViewMode()));
-        FrameLayout.LayoutParams viewToggleParams = new FrameLayout.LayoutParams(
+        ammoText = new TextView(this);
+        ammoText.setTextColor(Color.rgb(212, 175, 55));
+        ammoText.setTextSize(16f);
+        ammoText.getPaint().setFakeBoldText(true);
+        FrameLayout.LayoutParams ammoParams = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        ammoParams.gravity = Gravity.BOTTOM | Gravity.END;
+        ammoParams.setMargins(0, 0, 50, 230);
+        ammoText.setLayoutParams(ammoParams);
+        root.addView(ammoText);
+
+        HudButton viewToggle = new HudButton(this, "VIEW");
+        FrameLayout.LayoutParams viewToggleParams = new FrameLayout.LayoutParams(160, 80);
         viewToggleParams.gravity = Gravity.TOP | Gravity.END;
         viewToggleParams.setMargins(0, 40, 40, 0);
         viewToggle.setLayoutParams(viewToggleParams);
+        viewToggle.setOnTapListener(() -> glSurfaceView.queueEvent(() -> gameRenderer.toggleViewMode()));
         root.addView(viewToggle);
 
         setContentView(root);
+
+        hudPoller = () -> {
+            if (gameRenderer.isReloading()) {
+                ammoText.setText("RELOADING…");
+            } else {
+                ammoText.setText(gameRenderer.getCurrentAmmo() + " / " + gameRenderer.getMagSize());
+            }
+            crosshair.setHit(gameRenderer.isRecentHit());
+            hudHandler.postDelayed(hudPoller, HUD_POLL_MS);
+        };
+        hudHandler.post(hudPoller);
     }
 
     @Override
@@ -91,6 +107,12 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         glSurfaceView.onPause();
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        if (hudPoller != null) hudHandler.removeCallbacks(hudPoller);
     }
 
     @Override

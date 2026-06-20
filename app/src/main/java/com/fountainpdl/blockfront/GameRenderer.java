@@ -4,6 +4,9 @@ import android.content.Context;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
 import android.opengl.Matrix;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 
 import java.util.Arrays;
 
@@ -11,8 +14,9 @@ import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
 /**
- * Phase 3 renderer: first-person / third-person view toggle with a simple
- * blocky voxel player character, on top of Phase 2's look/move/shoot.
+ * Renderer: first-person / third-person view toggle with an animated voxel
+ * player character (round head/hands/feet, swinging walk cycle), look/move,
+ * and a shoot-to-break-block mechanic backed by a real magazine.
  */
 public class GameRenderer implements GLSurfaceView.Renderer {
 
@@ -46,13 +50,33 @@ public class GameRenderer implements GLSurfaceView.Renderer {
     private static final float TPP_PIVOT_HEIGHT = 1.8f;
     private static final float TPP_VERTICAL_OFFSET = 1.5f;
 
+    private static final int MAG_SIZE = 30;
+    private static final long RELOAD_DURATION_MS = 1500;
+    private static final long HIT_FLASH_MS = 150;
+
     private static final float[] GROUND_COLOR = {0.18f, 0.45f, 0.22f, 1f};
     private static final float[] SKIN_COLOR = {0.85f, 0.7f, 0.55f, 1f};
     private static final float[] SHIRT_COLOR = {0.83f, 0.69f, 0.22f, 1f};
     private static final float[] PANTS_COLOR = {0.12f, 0.12f, 0.14f, 1f};
 
+    // Character proportions/pivots (world units, character-local space).
+    private static final float LEG_HIP_Y = 0.9f;
+    private static final float LEG_SCALE_LEN = 0.5f;
+    private static final float LEG_FOOT_OFFSET = 0.85f;
+    private static final float TORSO_OY = 0.9f;
+    private static final float ARM_SHOULDER_Y = 1.7f;
+    private static final float ARM_SCALE_LEN = 0.44f;
+    private static final float ARM_HAND_OFFSET = 0.75f;
+    private static final float HEAD_RADIUS = 0.28f;
+    private static final float MAX_LEG_SWING_DEG = 35f;
+    private static final float MAX_ARM_SWING_DEG = 30f;
+    private static final float WALK_CYCLE_RATE = 0.25f;
+    private static final float IDLE_BOB_AMOUNT = 0.04f;
+    private static final float IDLE_BOB_RATE = 0.05f;
+
     private int program;
     private VoxelCube cube;
+    private VoxelSphere sphere;
 
     private final float[] projectionMatrix = new float[16];
     private final float[] viewMatrix = new float[16];
@@ -68,6 +92,13 @@ public class GameRenderer implements GLSurfaceView.Renderer {
 
     private volatile float moveDx = 0f, moveDz = 0f;
     private volatile boolean thirdPerson = false;
+
+    private volatile int currentAmmo = MAG_SIZE;
+    private volatile boolean reloading = false;
+    private volatile long lastHitUptimeMs = 0;
+
+    private float walkCyclePhase = 0f;
+    private float animTime = 0f;
 
     private final boolean[][] blockExists = new boolean[GRID_SIZE * 2][GRID_SIZE * 2];
 
@@ -95,8 +126,36 @@ public class GameRenderer implements GLSurfaceView.Renderer {
         thirdPerson = !thirdPerson;
     }
 
+    public int getCurrentAmmo() {
+        return currentAmmo;
+    }
+
+    public int getMagSize() {
+        return MAG_SIZE;
+    }
+
+    public boolean isReloading() {
+        return reloading;
+    }
+
+    /** True for a brief window right after a shot breaks a block — drives crosshair flash. */
+    public boolean isRecentHit() {
+        return SystemClock.uptimeMillis() - lastHitUptimeMs < HIT_FLASH_MS;
+    }
+
     /** Call via glSurfaceView.queueEvent(). */
     public void tryShoot() {
+        if (reloading) return;
+        if (currentAmmo <= 0) {
+            startReload();
+            return;
+        }
+
+        currentAmmo--;
+        if (currentAmmo == 0) {
+            startReload();
+        }
+
         float cosPitch = (float) Math.cos(pitch);
         float dirX = (float) Math.sin(yaw) * cosPitch;
         float dirY = (float) Math.sin(pitch);
@@ -125,9 +184,18 @@ public class GameRenderer implements GLSurfaceView.Renderer {
             float localZ = pz - gz * 2f;
             if (Math.abs(localX) < VoxelCube.SIZE && Math.abs(localZ) < VoxelCube.SIZE) {
                 blockExists[ix][iz] = false;
+                lastHitUptimeMs = SystemClock.uptimeMillis();
                 return;
             }
         }
+    }
+
+    private void startReload() {
+        reloading = true;
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            currentAmmo = MAG_SIZE;
+            reloading = false;
+        }, RELOAD_DURATION_MS);
     }
 
     @Override
@@ -144,6 +212,7 @@ public class GameRenderer implements GLSurfaceView.Renderer {
         GLES20.glLinkProgram(program);
 
         cube = new VoxelCube();
+        sphere = new VoxelSphere();
     }
 
     @Override
@@ -157,6 +226,8 @@ public class GameRenderer implements GLSurfaceView.Renderer {
     public void onDrawFrame(GL10 gl) {
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
 
+        animTime += 1f;
+
         float yawNow = yaw;
         float pitchNow = pitch;
 
@@ -167,6 +238,8 @@ public class GameRenderer implements GLSurfaceView.Renderer {
 
         float forwardAmount = -moveDz;
         float strafeAmount = moveDx;
+        float moveMagnitude = Math.min(1f, (float) Math.sqrt(
+                forwardAmount * forwardAmount + strafeAmount * strafeAmount));
 
         playerX += (moveForwardX * forwardAmount + moveRightX * strafeAmount) * MOVE_SPEED;
         playerZ += (moveForwardZ * forwardAmount + moveRightZ * strafeAmount) * MOVE_SPEED;
@@ -214,29 +287,81 @@ public class GameRenderer implements GLSurfaceView.Renderer {
         }
 
         if (tpp) {
-            drawCharacter(yawNow);
+            drawCharacter(yawNow, moveMagnitude);
         }
     }
 
-    private void drawCharacter(float facingYaw) {
+    private void drawCharacter(float facingYaw, float moveMagnitude) {
+        float bob = (float) Math.sin(animTime * IDLE_BOB_RATE) * IDLE_BOB_AMOUNT;
+
         Matrix.setIdentityM(characterMatrix, 0);
-        Matrix.translateM(characterMatrix, 0, playerX, PLAYER_FEET_Y, playerZ);
+        Matrix.translateM(characterMatrix, 0, playerX, PLAYER_FEET_Y + bob, playerZ);
         Matrix.rotateM(characterMatrix, 0, (float) Math.toDegrees(facingYaw), 0f, 1f, 0f);
 
-        drawPart(0.18f, 0f, 0f, 0.15f, 0.5f, 0.15f, PANTS_COLOR);
-        drawPart(-0.18f, 0f, 0f, 0.15f, 0.5f, 0.15f, PANTS_COLOR);
-        drawPart(0f, 0.9f, 0f, 0.4f, 0.55f, 0.25f, SHIRT_COLOR);
-        drawPart(0.5f, 0.9f, 0f, 0.12f, 0.5f, 0.12f, SHIRT_COLOR);
-        drawPart(-0.5f, 0.9f, 0f, 0.12f, 0.5f, 0.12f, SHIRT_COLOR);
-        drawPart(0f, 1.89f, 0f, 0.3f, 0.3f, 0.3f, SKIN_COLOR);
+        walkCyclePhase += moveMagnitude * WALK_CYCLE_RATE;
+        float swing = (float) Math.sin(walkCyclePhase) * moveMagnitude;
+        float legSwingDeg = swing * MAX_LEG_SWING_DEG;
+        float armSwingDeg = swing * MAX_ARM_SWING_DEG;
+
+        // Legs swing opposite each other; arms swing opposite the same-side leg.
+        drawSwingingPart(0.18f, LEG_HIP_Y, 0f, legSwingDeg, 0.15f, LEG_SCALE_LEN, 0.15f, PANTS_COLOR);
+        drawSwingingPart(-0.18f, LEG_HIP_Y, 0f, -legSwingDeg, 0.15f, LEG_SCALE_LEN, 0.15f, PANTS_COLOR);
+        drawSwingingSpherePart(0.18f, LEG_HIP_Y, 0f, legSwingDeg, LEG_FOOT_OFFSET, 0.16f, PANTS_COLOR);
+        drawSwingingSpherePart(-0.18f, LEG_HIP_Y, 0f, -legSwingDeg, LEG_FOOT_OFFSET, 0.16f, PANTS_COLOR);
+
+        drawPart(0f, TORSO_OY, 0f, 0.4f, 0.55f, 0.25f, SHIRT_COLOR);
+
+        drawSwingingPart(0.5f, ARM_SHOULDER_Y, 0f, -armSwingDeg, 0.12f, ARM_SCALE_LEN, 0.12f, SHIRT_COLOR);
+        drawSwingingPart(-0.5f, ARM_SHOULDER_Y, 0f, armSwingDeg, 0.12f, ARM_SCALE_LEN, 0.12f, SHIRT_COLOR);
+        drawSwingingSpherePart(0.5f, ARM_SHOULDER_Y, 0f, -armSwingDeg, ARM_HAND_OFFSET, 0.14f, SKIN_COLOR);
+        drawSwingingSpherePart(-0.5f, ARM_SHOULDER_Y, 0f, armSwingDeg, ARM_HAND_OFFSET, 0.14f, SKIN_COLOR);
+
+        drawSpherePart(0f, ARM_SHOULDER_Y + HEAD_RADIUS + 0.08f, 0f, HEAD_RADIUS, SKIN_COLOR);
     }
 
+    /** Static part (torso) — base of the cube is the offset, extends upward. */
     private void drawPart(float ox, float oy, float oz, float sx, float sy, float sz, float[] color) {
         System.arraycopy(characterMatrix, 0, partMatrix, 0, 16);
         Matrix.translateM(partMatrix, 0, ox, oy, oz);
         Matrix.scaleM(partMatrix, 0, sx, sy, sz);
         Matrix.multiplyMM(mvpMatrix, 0, vpMatrix, 0, partMatrix, 0);
         cube.draw(program, mvpMatrix, color);
+    }
+
+    /** A round part (head) — sphere centered at the given offset. */
+    private void drawSpherePart(float ox, float oy, float oz, float radius, float[] color) {
+        System.arraycopy(characterMatrix, 0, partMatrix, 0, 16);
+        Matrix.translateM(partMatrix, 0, ox, oy, oz);
+        Matrix.scaleM(partMatrix, 0, radius, radius, radius);
+        Matrix.multiplyMM(mvpMatrix, 0, vpMatrix, 0, partMatrix, 0);
+        sphere.draw(program, mvpMatrix, color);
+    }
+
+    /**
+     * A limb (leg/arm) that pivots and swings from its attachment point
+     * (hip/shoulder) and hangs downward — negative Y scale flips the cube
+     * to extend down from the pivot instead of up from its base.
+     */
+    private void drawSwingingPart(float ox, float pivotY, float oz, float swingDegrees,
+                                   float sx, float sy, float sz, float[] color) {
+        System.arraycopy(characterMatrix, 0, partMatrix, 0, 16);
+        Matrix.translateM(partMatrix, 0, ox, pivotY, oz);
+        Matrix.rotateM(partMatrix, 0, swingDegrees, 1f, 0f, 0f);
+        Matrix.scaleM(partMatrix, 0, sx, -sy, sz);
+        Matrix.multiplyMM(mvpMatrix, 0, vpMatrix, 0, partMatrix, 0);
+        cube.draw(program, mvpMatrix, color);
+    }
+
+    /** A round cap (hand/foot) attached at the tip of a swinging limb. */
+    private void drawSwingingSpherePart(float ox, float pivotY, float oz, float swingDegrees,
+                                         float tipOffsetY, float radius, float[] color) {
+        System.arraycopy(characterMatrix, 0, partMatrix, 0, 16);
+        Matrix.translateM(partMatrix, 0, ox, pivotY, oz);
+        Matrix.rotateM(partMatrix, 0, swingDegrees, 1f, 0f, 0f);
+        Matrix.translateM(partMatrix, 0, 0f, -tipOffsetY, 0f);
+        Matrix.scaleM(partMatrix, 0, radius, radius, radius);
+        Matrix.multiplyMM(mvpMatrix, 0, vpMatrix, 0, partMatrix, 0);
+        sphere.draw(program, mvpMatrix, color);
     }
 
     private int compileShader(int type, String src) {
