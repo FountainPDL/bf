@@ -23,6 +23,20 @@
         </activity>
 
         <activity
+            android:name=".MenuActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@style/Theme.BlockFront.Fullscreen" />
+
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@style/Theme.BlockFront.Fullscreen" />
+
+        <activity
             android:name=".MainActivity"
             android:exported="false"
             android:screenOrientation="landscape"

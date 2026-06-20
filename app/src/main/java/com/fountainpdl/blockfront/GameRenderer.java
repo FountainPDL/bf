@@ -1,6 +1,7 @@
 package com.fountainpdl.blockfront;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
 import android.opengl.Matrix;
@@ -9,14 +10,16 @@ import android.os.Looper;
 import android.os.SystemClock;
 
 import java.util.Arrays;
+import java.util.Random;
 
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
 /**
  * Renderer: first-person / third-person view toggle with an animated voxel
- * player character (round head/hands/feet, swinging walk cycle), look/move,
- * and a shoot-to-break-block mechanic backed by a real magazine.
+ * player character, look/move, shoot-to-break-block backed by a real
+ * magazine, and an optional Demolition mode (marked targets, countdown,
+ * win/lose) layered on top of free-roam Sandbox.
  */
 public class GameRenderer implements GLSurfaceView.Renderer {
 
@@ -54,12 +57,15 @@ public class GameRenderer implements GLSurfaceView.Renderer {
     private static final long RELOAD_DURATION_MS = 1500;
     private static final long HIT_FLASH_MS = 150;
 
+    private static final int DEMOLITION_TARGET_COUNT = 15;
+    private static final long DEMOLITION_DURATION_MS = 60000;
+
     private static final float[] GROUND_COLOR = {0.18f, 0.45f, 0.22f, 1f};
+    private static final float[] TARGET_COLOR = {0.85f, 0.16f, 0.1f, 1f};
     private static final float[] SKIN_COLOR = {0.85f, 0.7f, 0.55f, 1f};
     private static final float[] SHIRT_COLOR = {0.83f, 0.69f, 0.22f, 1f};
     private static final float[] PANTS_COLOR = {0.12f, 0.12f, 0.14f, 1f};
 
-    // Character proportions/pivots (world units, character-local space).
     private static final float LEG_HIP_Y = 0.9f;
     private static final float LEG_SCALE_LEN = 0.5f;
     private static final float LEG_FOOT_OFFSET = 0.85f;
@@ -100,12 +106,49 @@ public class GameRenderer implements GLSurfaceView.Renderer {
     private float walkCyclePhase = 0f;
     private float animTime = 0f;
 
+    private final float lookSensitivityMultiplier;
+
+    private final boolean demolitionMode;
+    private boolean[][] targetBlocks;
+    private volatile int targetsRemaining = 0;
+    private long demolitionStartUptimeMs = 0;
+    private volatile boolean gameWon = false;
+    private volatile boolean gameLost = false;
+    private volatile long completionTimeMs = 0;
+
     private final boolean[][] blockExists = new boolean[GRID_SIZE * 2][GRID_SIZE * 2];
 
-    public GameRenderer(Context context) {
+    public GameRenderer(Context context, String mode) {
         for (boolean[] row : blockExists) {
             Arrays.fill(row, true);
         }
+
+        SharedPreferences prefs = context.getSharedPreferences(
+                SettingsActivity.PREFS_NAME, Context.MODE_PRIVATE);
+        int sensitivityPercent = prefs.getInt(
+                SettingsActivity.KEY_SENSITIVITY_PERCENT, SettingsActivity.DEFAULT_SENSITIVITY_PERCENT);
+        this.lookSensitivityMultiplier = SettingsActivity.percentToMultiplier(sensitivityPercent);
+
+        this.demolitionMode = "demolition".equals(mode);
+        if (demolitionMode) {
+            initDemolitionTargets();
+        }
+    }
+
+    private void initDemolitionTargets() {
+        targetBlocks = new boolean[GRID_SIZE * 2][GRID_SIZE * 2];
+        Random rnd = new Random();
+        int placed = 0;
+        while (placed < DEMOLITION_TARGET_COUNT) {
+            int x = rnd.nextInt(GRID_SIZE * 2);
+            int z = rnd.nextInt(GRID_SIZE * 2);
+            if (!targetBlocks[x][z]) {
+                targetBlocks[x][z] = true;
+                placed++;
+            }
+        }
+        targetsRemaining = DEMOLITION_TARGET_COUNT;
+        demolitionStartUptimeMs = SystemClock.uptimeMillis();
     }
 
     public void setMoveInput(float dx, float dy) {
@@ -115,8 +158,9 @@ public class GameRenderer implements GLSurfaceView.Renderer {
 
     /** Called from the UI thread by the look-drag surface. */
     public void addLookDelta(float dxPixels, float dyPixels) {
-        yaw += dxPixels * LOOK_SENSITIVITY;
-        pitch -= dyPixels * LOOK_SENSITIVITY;
+        float s = LOOK_SENSITIVITY * lookSensitivityMultiplier;
+        yaw += dxPixels * s;
+        pitch -= dyPixels * s;
         if (pitch > PITCH_LIMIT) pitch = PITCH_LIMIT;
         if (pitch < -PITCH_LIMIT) pitch = -PITCH_LIMIT;
     }
@@ -138,9 +182,34 @@ public class GameRenderer implements GLSurfaceView.Renderer {
         return reloading;
     }
 
-    /** True for a brief window right after a shot breaks a block — drives crosshair flash. */
     public boolean isRecentHit() {
         return SystemClock.uptimeMillis() - lastHitUptimeMs < HIT_FLASH_MS;
+    }
+
+    public boolean isDemolitionMode() {
+        return demolitionMode;
+    }
+
+    public int getTargetsRemaining() {
+        return targetsRemaining;
+    }
+
+    public long getTimeRemainingMs() {
+        if (!demolitionMode) return 0;
+        long elapsed = SystemClock.uptimeMillis() - demolitionStartUptimeMs;
+        return Math.max(0, DEMOLITION_DURATION_MS - elapsed);
+    }
+
+    public boolean isGameWon() {
+        return gameWon;
+    }
+
+    public boolean isGameLost() {
+        return gameLost;
+    }
+
+    public long getCompletionTimeMs() {
+        return completionTimeMs;
     }
 
     /** Call via glSurfaceView.queueEvent(). */
@@ -185,6 +254,16 @@ public class GameRenderer implements GLSurfaceView.Renderer {
             if (Math.abs(localX) < VoxelCube.SIZE && Math.abs(localZ) < VoxelCube.SIZE) {
                 blockExists[ix][iz] = false;
                 lastHitUptimeMs = SystemClock.uptimeMillis();
+
+                if (demolitionMode && !gameWon && !gameLost
+                        && targetBlocks != null && targetBlocks[ix][iz]) {
+                    targetBlocks[ix][iz] = false;
+                    targetsRemaining--;
+                    if (targetsRemaining <= 0) {
+                        gameWon = true;
+                        completionTimeMs = SystemClock.uptimeMillis() - demolitionStartUptimeMs;
+                    }
+                }
                 return;
             }
         }
@@ -227,6 +306,12 @@ public class GameRenderer implements GLSurfaceView.Renderer {
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
 
         animTime += 1f;
+
+        if (demolitionMode && !gameWon && !gameLost) {
+            if (getTimeRemainingMs() <= 0) {
+                gameLost = true;
+            }
+        }
 
         float yawNow = yaw;
         float pitchNow = pitch;
@@ -278,11 +363,14 @@ public class GameRenderer implements GLSurfaceView.Renderer {
 
         for (int x = -GRID_SIZE; x < GRID_SIZE; x++) {
             for (int z = -GRID_SIZE; z < GRID_SIZE; z++) {
-                if (!blockExists[x + GRID_SIZE][z + GRID_SIZE]) continue;
+                int ix = x + GRID_SIZE;
+                int iz = z + GRID_SIZE;
+                if (!blockExists[ix][iz]) continue;
                 Matrix.setIdentityM(modelMatrix, 0);
                 Matrix.translateM(modelMatrix, 0, x * 2f, 0f, z * 2f);
                 Matrix.multiplyMM(mvpMatrix, 0, vpMatrix, 0, modelMatrix, 0);
-                cube.draw(program, mvpMatrix, GROUND_COLOR);
+                boolean isTarget = demolitionMode && targetBlocks != null && targetBlocks[ix][iz];
+                cube.draw(program, mvpMatrix, isTarget ? TARGET_COLOR : GROUND_COLOR);
             }
         }
 
@@ -303,7 +391,6 @@ public class GameRenderer implements GLSurfaceView.Renderer {
         float legSwingDeg = swing * MAX_LEG_SWING_DEG;
         float armSwingDeg = swing * MAX_ARM_SWING_DEG;
 
-        // Legs swing opposite each other; arms swing opposite the same-side leg.
         drawSwingingPart(0.18f, LEG_HIP_Y, 0f, legSwingDeg, 0.15f, LEG_SCALE_LEN, 0.15f, PANTS_COLOR);
         drawSwingingPart(-0.18f, LEG_HIP_Y, 0f, -legSwingDeg, 0.15f, LEG_SCALE_LEN, 0.15f, PANTS_COLOR);
         drawSwingingSpherePart(0.18f, LEG_HIP_Y, 0f, legSwingDeg, LEG_FOOT_OFFSET, 0.16f, PANTS_COLOR);
@@ -319,7 +406,6 @@ public class GameRenderer implements GLSurfaceView.Renderer {
         drawSpherePart(0f, ARM_SHOULDER_Y + HEAD_RADIUS + 0.08f, 0f, HEAD_RADIUS, SKIN_COLOR);
     }
 
-    /** Static part (torso) — base of the cube is the offset, extends upward. */
     private void drawPart(float ox, float oy, float oz, float sx, float sy, float sz, float[] color) {
         System.arraycopy(characterMatrix, 0, partMatrix, 0, 16);
         Matrix.translateM(partMatrix, 0, ox, oy, oz);
@@ -328,7 +414,6 @@ public class GameRenderer implements GLSurfaceView.Renderer {
         cube.draw(program, mvpMatrix, color);
     }
 
-    /** A round part (head) — sphere centered at the given offset. */
     private void drawSpherePart(float ox, float oy, float oz, float radius, float[] color) {
         System.arraycopy(characterMatrix, 0, partMatrix, 0, 16);
         Matrix.translateM(partMatrix, 0, ox, oy, oz);
@@ -337,11 +422,6 @@ public class GameRenderer implements GLSurfaceView.Renderer {
         sphere.draw(program, mvpMatrix, color);
     }
 
-    /**
-     * A limb (leg/arm) that pivots and swings from its attachment point
-     * (hip/shoulder) and hangs downward — negative Y scale flips the cube
-     * to extend down from the pivot instead of up from its base.
-     */
     private void drawSwingingPart(float ox, float pivotY, float oz, float swingDegrees,
                                    float sx, float sy, float sz, float[] color) {
         System.arraycopy(characterMatrix, 0, partMatrix, 0, 16);
@@ -352,7 +432,6 @@ public class GameRenderer implements GLSurfaceView.Renderer {
         cube.draw(program, mvpMatrix, color);
     }
 
-    /** A round cap (hand/foot) attached at the tip of a swinging limb. */
     private void drawSwingingSpherePart(float ox, float pivotY, float oz, float swingDegrees,
                                          float tipOffsetY, float radius, float[] color) {
         System.arraycopy(characterMatrix, 0, partMatrix, 0, 16);
