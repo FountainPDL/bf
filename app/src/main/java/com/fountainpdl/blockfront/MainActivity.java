@@ -7,6 +7,7 @@ import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
+import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 
@@ -31,7 +32,7 @@ public class MainActivity extends Activity {
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
         // Full-screen drag-to-look. Sits above the GL surface but below the
-        // joystick/fire button, so those corners keep their own touches.
+        // joystick/fire/view buttons, so those corners keep their own touches.
         LookSurfaceView lookSurface = new LookSurfaceView(this);
         lookSurface.setOnLookListener((dx, dy) -> gameRenderer.addLookDelta(dx, dy));
         root.addView(lookSurface, new FrameLayout.LayoutParams(
@@ -63,6 +64,19 @@ public class MainActivity extends Activity {
         fireButton.setLayoutParams(fireParams);
         fireButton.setOnFireListener(() -> glSurfaceView.queueEvent(() -> gameRenderer.tryShoot()));
         root.addView(fireButton);
+
+        Button viewToggle = new Button(this);
+        viewToggle.setText("VIEW");
+        viewToggle.setAllCaps(true);
+        viewToggle.setTextColor(Color.WHITE);
+        viewToggle.setBackgroundColor(Color.argb(150, 24, 24, 24));
+        viewToggle.setOnClickListener(v -> glSurfaceView.queueEvent(() -> gameRenderer.toggleViewMode()));
+        FrameLayout.LayoutParams viewToggleParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        viewToggleParams.gravity = Gravity.TOP | Gravity.END;
+        viewToggleParams.setMargins(0, 40, 40, 0);
+        viewToggle.setLayoutParams(viewToggleParams);
+        root.addView(viewToggle);
 
         setContentView(root);
     }

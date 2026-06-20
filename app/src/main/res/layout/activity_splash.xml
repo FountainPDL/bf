@@ -4,16 +4,24 @@
     android:layout_height="match_parent"
     android:background="@color/splash_bg">
 
+    <com.fountainpdl.blockfront.FountainSplashView
+        android:id="@+id/fountainView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
     <TextView
         android:id="@+id/splashTitle"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_centerInParent="true"
+        android:layout_centerHorizontal="true"
+        android:layout_alignParentBottom="true"
+        android:layout_marginBottom="72dp"
         android:text="@string/studio_name"
         android:textColor="@color/splash_gold"
-        android:textSize="28sp"
+        android:textSize="26sp"
         android:textStyle="bold"
-        android:letterSpacing="0.15"
-        android:fontFamily="sans-serif-light" />
+        android:letterSpacing="0.12"
+        android:fontFamily="sans-serif-light"
+        android:alpha="0" />
 
 </RelativeLayout>

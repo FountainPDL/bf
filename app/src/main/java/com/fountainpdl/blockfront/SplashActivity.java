@@ -10,13 +10,22 @@ import android.view.WindowManager;
 
 public class SplashActivity extends Activity {
 
-    private static final long SPLASH_DURATION_MS = 1800;
+    private static final long SPLASH_DURATION_MS = 2400;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         hideSystemUI();
         setContentView(R.layout.activity_splash);
+
+        View title = findViewById(R.id.splashTitle);
+        title.setTranslationY(40f);
+        title.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setStartDelay(250)
+                .setDuration(700)
+                .start();
 
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
             startActivity(new Intent(SplashActivity.this, MainActivity.class));
