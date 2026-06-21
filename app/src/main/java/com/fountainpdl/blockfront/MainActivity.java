@@ -22,8 +22,11 @@ public class MainActivity extends Activity {
     private GameRenderer gameRenderer;
     private CrosshairView crosshair;
     private TextView ammoText;
+    private TextView fuelText;
     private TextView targetsText;
     private TextView timerText;
+    private TextView healthText;
+    private TextView zoneText;
     private HudButton weaponButton;
     private FrameLayout resultOverlay;
     private TextView resultTitle;
@@ -38,12 +41,14 @@ public class MainActivity extends Activity {
 
         String mode = getIntent().getStringExtra("mode");
         if (mode == null) mode = "sandbox";
+        String mapId = getIntent().getStringExtra("map");
+        if (mapId == null) mapId = "grasslands";
 
         FrameLayout root = new FrameLayout(this);
 
         glSurfaceView = new GLSurfaceView(this);
         glSurfaceView.setEGLContextClientVersion(2);
-        gameRenderer = new GameRenderer(this, mode);
+        gameRenderer = new GameRenderer(this, mode, mapId);
         glSurfaceView.setRenderer(gameRenderer);
         glSurfaceView.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
         root.addView(glSurfaceView, new FrameLayout.LayoutParams(
@@ -59,27 +64,18 @@ public class MainActivity extends Activity {
         crosshairParams.gravity = Gravity.CENTER;
         root.addView(crosshair, crosshairParams);
 
-        targetsText = new TextView(this);
-        targetsText.setTextColor(Color.rgb(212, 175, 55));
-        targetsText.setTextSize(16f);
-        targetsText.getPaint().setFakeBoldText(true);
-        targetsText.setVisibility(View.GONE);
-        FrameLayout.LayoutParams targetsParams = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
-        targetsParams.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-        targetsParams.topMargin = 36;
+        targetsText = hudLabel(Color.rgb(212, 175, 55));
+        FrameLayout.LayoutParams targetsParams = topCenterParams(36);
         root.addView(targetsText, targetsParams);
 
-        timerText = new TextView(this);
-        timerText.setTextColor(Color.WHITE);
-        timerText.setTextSize(16f);
-        timerText.getPaint().setFakeBoldText(true);
-        timerText.setVisibility(View.GONE);
-        FrameLayout.LayoutParams timerParams = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
-        timerParams.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-        timerParams.topMargin = 66;
-        root.addView(timerText, timerParams);
+        timerText = hudLabel(Color.WHITE);
+        root.addView(timerText, topCenterParams(66));
+
+        healthText = hudLabel(Color.rgb(220, 70, 60));
+        root.addView(healthText, topCenterParams(36));
+
+        zoneText = hudLabel(Color.rgb(190, 120, 220));
+        root.addView(zoneText, topCenterParams(66));
 
         // --- Top-left: weapon name / switch ---
         weaponButton = new HudButton(this, gameRenderer.getWeaponName());
@@ -99,7 +95,7 @@ public class MainActivity extends Activity {
         viewToggle.setOnTapListener(() -> glSurfaceView.queueEvent(gameRenderer::toggleViewMode));
         root.addView(viewToggle);
 
-        // --- Bottom-left: joystick + jump ---
+        // --- Bottom-left: joystick + jetpack (tap=hop, hold=fly) ---
         TouchJoystick moveStick = new TouchJoystick(this);
         FrameLayout.LayoutParams stickParams = new FrameLayout.LayoutParams(280, 280);
         stickParams.gravity = Gravity.BOTTOM | Gravity.START;
@@ -113,8 +109,19 @@ public class MainActivity extends Activity {
         jumpParams.gravity = Gravity.BOTTOM | Gravity.START;
         jumpParams.setMargins(300, 0, 0, 340);
         jumpButton.setLayoutParams(jumpParams);
-        jumpButton.setOnTapListener(gameRenderer::tryJump);
+        jumpButton.setOnPressListener(() -> glSurfaceView.queueEvent(gameRenderer::onThrustPress));
+        jumpButton.setOnReleaseListener(() -> glSurfaceView.queueEvent(gameRenderer::onThrustRelease));
         root.addView(jumpButton);
+
+        fuelText = new TextView(this);
+        fuelText.setTextColor(Color.rgb(212, 175, 55));
+        fuelText.setTextSize(13f);
+        FrameLayout.LayoutParams fuelParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        fuelParams.gravity = Gravity.BOTTOM | Gravity.START;
+        fuelParams.setMargins(300, 0, 0, 446);
+        fuelText.setLayoutParams(fuelParams);
+        root.addView(fuelText);
 
         // --- Bottom-right: reload, fire, ammo ---
         HudButton reloadButton = new HudButton(this, "RELOAD");
@@ -144,7 +151,7 @@ public class MainActivity extends Activity {
         ammoText.setLayoutParams(ammoParams);
         root.addView(ammoText);
 
-        // --- Result overlay (Demolition win/lose) ---
+        // --- Result overlay (Demolition / Battle Royale end-of-match) ---
         resultOverlay = new FrameLayout(this);
         resultOverlay.setBackgroundColor(Color.argb(215, 0, 0, 0));
         resultOverlay.setVisibility(View.GONE);
@@ -207,36 +214,73 @@ public class MainActivity extends Activity {
             }
             crosshair.setHit(gameRenderer.isRecentHit());
             weaponButton.setLabel(gameRenderer.getWeaponName());
+            fuelText.setText("FUEL " + (int) (gameRenderer.getFuelPercent() * 100) + "%");
+
+            targetsText.setVisibility(gameRenderer.isDemolitionMode() ? View.VISIBLE : View.GONE);
+            timerText.setVisibility(gameRenderer.isDemolitionMode() ? View.VISIBLE : View.GONE);
+            healthText.setVisibility(gameRenderer.isBattleRoyaleMode() ? View.VISIBLE : View.GONE);
+            zoneText.setVisibility(gameRenderer.isBattleRoyaleMode() ? View.VISIBLE : View.GONE);
 
             if (gameRenderer.isDemolitionMode()) {
-                targetsText.setVisibility(View.VISIBLE);
-                timerText.setVisibility(View.VISIBLE);
                 targetsText.setText("TARGETS: " + gameRenderer.getTargetsRemaining());
-
                 long remainingMs = gameRenderer.getTimeRemainingMs();
                 int totalSeconds = (int) (remainingMs / 1000);
                 timerText.setText(String.format("%d:%02d", totalSeconds / 60, totalSeconds % 60));
 
                 if (gameRenderer.isGameWon() && resultOverlay.getVisibility() != View.VISIBLE) {
-                    resultTitle.setText("MISSION COMPLETE");
-                    resultTitle.setTextColor(Color.rgb(212, 175, 55));
-                    long t = gameRenderer.getCompletionTimeMs() / 1000;
-                    resultSubtitle.setText("Cleared in " + (t / 60) + ":" + String.format("%02d", t % 60));
-                    resultOverlay.setVisibility(View.VISIBLE);
+                    showResult("MISSION COMPLETE", Color.rgb(212, 175, 55),
+                            "Cleared in " + formatSeconds(gameRenderer.getCompletionTimeMs()));
                 } else if (gameRenderer.isGameLost() && resultOverlay.getVisibility() != View.VISIBLE) {
-                    resultTitle.setText("TIME'S UP");
-                    resultTitle.setTextColor(Color.rgb(200, 60, 50));
-                    resultSubtitle.setText(gameRenderer.getTargetsRemaining() + " targets remaining");
-                    resultOverlay.setVisibility(View.VISIBLE);
+                    showResult("TIME'S UP", Color.rgb(200, 60, 50),
+                            gameRenderer.getTargetsRemaining() + " targets remaining");
                 }
-            } else {
-                targetsText.setVisibility(View.GONE);
-                timerText.setVisibility(View.GONE);
+            }
+
+            if (gameRenderer.isBattleRoyaleMode()) {
+                healthText.setText("HP: " + (int) (gameRenderer.getBrHealthPercent() * 100));
+                zoneText.setText(gameRenderer.isInDangerZone() ? "OUTSIDE THE ZONE" : "ZONE SAFE");
+
+                if (gameRenderer.isBrEliminated() && resultOverlay.getVisibility() != View.VISIBLE) {
+                    showResult("ELIMINATED", Color.rgb(200, 60, 50),
+                            "Survived " + formatSeconds(gameRenderer.getBrSurvivalMs()));
+                } else if (gameRenderer.isBrSurvived() && resultOverlay.getVisibility() != View.VISIBLE) {
+                    showResult("ZONE SURVIVED", Color.rgb(212, 175, 55),
+                            "You held the final circle");
+                }
             }
 
             hudHandler.postDelayed(hudPoller, HUD_POLL_MS);
         };
         hudHandler.post(hudPoller);
+    }
+
+    private TextView hudLabel(int color) {
+        TextView tv = new TextView(this);
+        tv.setTextColor(color);
+        tv.setTextSize(16f);
+        tv.getPaint().setFakeBoldText(true);
+        tv.setVisibility(View.GONE);
+        return tv;
+    }
+
+    private FrameLayout.LayoutParams topCenterParams(int topMargin) {
+        FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        p.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        p.topMargin = topMargin;
+        return p;
+    }
+
+    private void showResult(String title, int color, String subtitle) {
+        resultTitle.setText(title);
+        resultTitle.setTextColor(color);
+        resultSubtitle.setText(subtitle);
+        resultOverlay.setVisibility(View.VISIBLE);
+    }
+
+    private String formatSeconds(long ms) {
+        long s = ms / 1000;
+        return (s / 60) + ":" + String.format("%02d", s % 60);
     }
 
     @Override

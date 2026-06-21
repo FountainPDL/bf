@@ -30,6 +30,27 @@
             android:theme="@style/Theme.BlockFront.Fullscreen" />
 
         <activity
+            android:name=".MapSelectActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@style/Theme.BlockFront.Fullscreen" />
+
+        <activity
+            android:name=".CampaignActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@style/Theme.BlockFront.Fullscreen" />
+
+        <activity
+            android:name=".CreditsActivity"
+            android:exported="false"
+            android:screenOrientation="landscape"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@style/Theme.BlockFront.Fullscreen" />
+
+        <activity
             android:name=".SettingsActivity"
             android:exported="false"
             android:screenOrientation="landscape"

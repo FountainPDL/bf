@@ -8,11 +8,21 @@ import android.graphics.RectF;
 import android.view.MotionEvent;
 import android.view.View;
 
-/** Small rounded tap button matching the game's gold/black HUD style. */
+/** Small rounded tap button matching the game's gold/black HUD style.
+ *  Supports a simple tap callback, plus optional press/release callbacks
+ *  for hold-style controls (e.g. jetpack thrust). */
 public class HudButton extends View {
 
     public interface OnTapListener {
         void onTap();
+    }
+
+    public interface OnPressListener {
+        void onPress();
+    }
+
+    public interface OnReleaseListener {
+        void onRelease();
     }
 
     private final Paint bgPaint = new Paint();
@@ -20,7 +30,9 @@ public class HudButton extends View {
     private final RectF rect = new RectF();
     private String label;
     private boolean pressed = false;
-    private OnTapListener listener;
+    private OnTapListener tapListener;
+    private OnPressListener pressListener;
+    private OnReleaseListener releaseListener;
 
     public HudButton(Context context, String label) {
         super(context);
@@ -28,13 +40,21 @@ public class HudButton extends View {
         bgPaint.setAntiAlias(true);
         textPaint.setAntiAlias(true);
         textPaint.setColor(Color.rgb(212, 175, 55));
-        textPaint.setTextSize(26f);
+        textPaint.setTextSize(24f);
         textPaint.setTextAlign(Paint.Align.CENTER);
         textPaint.setFakeBoldText(true);
     }
 
     public void setOnTapListener(OnTapListener l) {
-        this.listener = l;
+        this.tapListener = l;
+    }
+
+    public void setOnPressListener(OnPressListener l) {
+        this.pressListener = l;
+    }
+
+    public void setOnReleaseListener(OnReleaseListener l) {
+        this.releaseListener = l;
     }
 
     public void setLabel(String label) {
@@ -63,15 +83,18 @@ public class HudButton extends View {
             case MotionEvent.ACTION_DOWN:
                 pressed = true;
                 invalidate();
+                if (pressListener != null) pressListener.onPress();
                 return true;
             case MotionEvent.ACTION_UP:
                 pressed = false;
                 invalidate();
-                if (listener != null) listener.onTap();
+                if (releaseListener != null) releaseListener.onRelease();
+                if (tapListener != null) tapListener.onTap();
                 return true;
             case MotionEvent.ACTION_CANCEL:
                 pressed = false;
                 invalidate();
+                if (releaseListener != null) releaseListener.onRelease();
                 return true;
             default:
                 return super.onTouchEvent(event);

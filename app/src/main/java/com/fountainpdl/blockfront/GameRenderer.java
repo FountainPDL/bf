@@ -17,9 +17,10 @@ import javax.microedition.khronos.opengles.GL10;
 
 /**
  * Renderer: first-person / third-person view toggle with an animated voxel
- * player character, look/move/jump, two weapons (pistol/rifle) with a
- * visible first-person viewmodel and recoil, and an optional Demolition
- * mode layered on top of free-roam Sandbox.
+ * player character (now holding the weapon in TPP too), jetpack flight,
+ * look/move, two weapons (pistol/rifle), a map color system, and two
+ * gameplay modes — Demolition (timed target-clear) and Battle Royale
+ * (shrinking-zone survival) — layered on free-roam Sandbox.
  */
 public class GameRenderer implements GLSurfaceView.Renderer {
 
@@ -40,7 +41,9 @@ public class GameRenderer implements GLSurfaceView.Renderer {
             "  gl_FragColor = fColor;" +
             "}";
 
-    private static final int GRID_SIZE = 12;
+    private static final int GRID_SIZE_NORMAL = 12;
+    private static final int GRID_SIZE_BR = 20;
+    private static final float FOV_DEGREES = 75f;
     private static final float MOVE_SPEED = 0.15f;
     private static final float LOOK_SENSITIVITY = 0.0025f;
     private static final float PITCH_LIMIT = (float) Math.toRadians(85);
@@ -52,8 +55,16 @@ public class GameRenderer implements GLSurfaceView.Renderer {
     private static final float TPP_PIVOT_HEIGHT = 1.8f;
     private static final float TPP_VERTICAL_OFFSET = 1.5f;
 
+    // Jetpack: tap = small hop, hold = sustained thrust that drains fuel.
     private static final float GRAVITY = -0.02f;
-    private static final float JUMP_VELOCITY = 0.3f;
+    private static final float INITIAL_HOP_VELOCITY = 0.16f;
+    private static final float JETPACK_ACCEL = 0.032f;
+    private static final float MAX_RISE_VELOCITY = 0.42f;
+    private static final float MAX_FALL_VELOCITY = -0.6f;
+    private static final float FUEL_MAX = 100f;
+    private static final float FUEL_DRAIN_PER_FRAME = 1.2f;
+    private static final float FUEL_REGEN_PER_FRAME = 0.5f;
+    private static final float MIN_FUEL_FOR_HOP = 10f;
 
     private static final int WEAPON_PISTOL = 0;
     private static final int WEAPON_RIFLE = 1;
@@ -67,14 +78,31 @@ public class GameRenderer implements GLSurfaceView.Renderer {
     private static final int DEMOLITION_TARGET_COUNT = 15;
     private static final long DEMOLITION_DURATION_MS = 60000;
 
-    private static final float[] GROUND_COLOR = {0.18f, 0.45f, 0.22f, 1f};
+    private static final long BR_DURATION_MS = 150000;
+    private static final float BR_FINAL_RADIUS = 4f;
+    private static final float BR_MAX_HEALTH = 100f;
+    private static final float BR_ZONE_DAMAGE_PER_SEC = 8f;
+
+    private static final float[][] MAP_GROUND_COLORS = {
+            {0.18f, 0.45f, 0.22f, 1f}, // grasslands
+            {0.76f, 0.66f, 0.42f, 1f}, // desert
+            {0.86f, 0.88f, 0.92f, 1f}, // snow
+    };
+    private static final float[][] MAP_SKY_COLORS = {
+            {0.45f, 0.65f, 0.85f, 1f}, // grasslands
+            {0.85f, 0.66f, 0.36f, 1f}, // desert
+            {0.75f, 0.82f, 0.90f, 1f}, // snow
+    };
+
     private static final float[] TARGET_COLOR = {0.85f, 0.16f, 0.1f, 1f};
+    private static final float[] ZONE_DANGER_COLOR = {0.30f, 0.10f, 0.26f, 1f};
     private static final float[] SKIN_COLOR = {0.85f, 0.7f, 0.55f, 1f};
     private static final float[] SHIRT_COLOR = {0.83f, 0.69f, 0.22f, 1f};
     private static final float[] PANTS_COLOR = {0.12f, 0.12f, 0.14f, 1f};
     private static final float[] METAL_DARK = {0.16f, 0.16f, 0.18f, 1f};
     private static final float[] METAL_MID = {0.32f, 0.32f, 0.35f, 1f};
     private static final float[] GRIP_COLOR = {0.08f, 0.08f, 0.08f, 1f};
+    private static final float[] FLAME_COLOR = {1f, 0.55f, 0.12f, 1f};
 
     private static final float LEG_HIP_Y = 0.9f;
     private static final float LEG_SCALE_LEN = 0.5f;
@@ -102,8 +130,9 @@ public class GameRenderer implements GLSurfaceView.Renderer {
     private final float[] characterMatrix = new float[16];
     private final float[] partMatrix = new float[16];
     private final float[] viewmodelMatrix = new float[16];
-    private final float[] viewmodelPartMatrix = new float[16];
-    private final float[] viewmodelMvp = new float[16];
+    private final float[] weaponBaseMatrix = new float[16];
+    private final float[] weaponTempMatrix = new float[16];
+    private final float[] weaponMvpTemp = new float[16];
 
     private float playerX = 0f, playerZ = 10f;
     private float playerY = 0f;
@@ -115,7 +144,8 @@ public class GameRenderer implements GLSurfaceView.Renderer {
 
     private volatile float moveDx = 0f, moveDz = 0f;
     private volatile boolean thirdPerson = false;
-    private volatile boolean jumpRequested = false;
+    private volatile boolean thrustHeld = false;
+    private float fuel = FUEL_MAX;
 
     private int currentWeapon = WEAPON_RIFLE;
     private final int[] ammoPerWeapon = {WEAPON_MAG_SIZE[WEAPON_PISTOL], WEAPON_MAG_SIZE[WEAPON_RIFLE]};
@@ -128,6 +158,10 @@ public class GameRenderer implements GLSurfaceView.Renderer {
 
     private final float lookSensitivityMultiplier;
 
+    private final int gridSize;
+    private final int mapIndex;
+    private final boolean[][] blockExists;
+
     private final boolean demolitionMode;
     private boolean[][] targetBlocks;
     private volatile int targetsRemaining = 0;
@@ -136,9 +170,24 @@ public class GameRenderer implements GLSurfaceView.Renderer {
     private volatile boolean gameLost = false;
     private volatile long completionTimeMs = 0;
 
-    private final boolean[][] blockExists = new boolean[GRID_SIZE * 2][GRID_SIZE * 2];
+    private final boolean battleRoyaleMode;
+    private final float brInitialRadius;
+    private float currentZoneRadius;
+    private float brHealth = BR_MAX_HEALTH;
+    private long brStartUptimeMs = 0;
+    private volatile boolean brEliminated = false;
+    private volatile boolean brSurvived = false;
+    private volatile long brSurvivalMs = 0;
 
-    public GameRenderer(Context context, String mode) {
+    public GameRenderer(Context context, String mode, String mapId) {
+        this.demolitionMode = "demolition".equals(mode);
+        this.battleRoyaleMode = "battleroyale".equals(mode);
+        this.gridSize = battleRoyaleMode ? GRID_SIZE_BR : GRID_SIZE_NORMAL;
+        this.mapIndex = mapIndexFor(mapId);
+        this.brInitialRadius = gridSize * 2f * 0.9f;
+        this.currentZoneRadius = brInitialRadius;
+
+        this.blockExists = new boolean[gridSize * 2][gridSize * 2];
         for (boolean[] row : blockExists) {
             Arrays.fill(row, true);
         }
@@ -149,19 +198,29 @@ public class GameRenderer implements GLSurfaceView.Renderer {
                 SettingsActivity.KEY_SENSITIVITY_PERCENT, SettingsActivity.DEFAULT_SENSITIVITY_PERCENT);
         this.lookSensitivityMultiplier = SettingsActivity.percentToMultiplier(sensitivityPercent);
 
-        this.demolitionMode = "demolition".equals(mode);
         if (demolitionMode) {
             initDemolitionTargets();
         }
+        if (battleRoyaleMode) {
+            brStartUptimeMs = SystemClock.uptimeMillis();
+            playerX = 0f;
+            playerZ = 0f;
+        }
+    }
+
+    private static int mapIndexFor(String mapId) {
+        if ("desert".equals(mapId)) return 1;
+        if ("snow".equals(mapId)) return 2;
+        return 0;
     }
 
     private void initDemolitionTargets() {
-        targetBlocks = new boolean[GRID_SIZE * 2][GRID_SIZE * 2];
+        targetBlocks = new boolean[gridSize * 2][gridSize * 2];
         Random rnd = new Random();
         int placed = 0;
         while (placed < DEMOLITION_TARGET_COUNT) {
-            int x = rnd.nextInt(GRID_SIZE * 2);
-            int z = rnd.nextInt(GRID_SIZE * 2);
+            int x = rnd.nextInt(gridSize * 2);
+            int z = rnd.nextInt(gridSize * 2);
             if (!targetBlocks[x][z]) {
                 targetBlocks[x][z] = true;
                 placed++;
@@ -176,7 +235,6 @@ public class GameRenderer implements GLSurfaceView.Renderer {
         this.moveDz = dy;
     }
 
-    /** Called from the UI thread by the look-drag surface. */
     public void addLookDelta(float dxPixels, float dyPixels) {
         float s = LOOK_SENSITIVITY * lookSensitivityMultiplier;
         yaw += dxPixels * s;
@@ -185,22 +243,32 @@ public class GameRenderer implements GLSurfaceView.Renderer {
         if (pitch < -PITCH_LIMIT) pitch = -PITCH_LIMIT;
     }
 
-    /** Call via glSurfaceView.queueEvent(). */
     public void toggleViewMode() {
         thirdPerson = !thirdPerson;
     }
 
-    /** Safe to call from the UI thread directly — just flips a flag the GL thread reads. */
-    public void tryJump() {
-        jumpRequested = true;
+    /** Call via glSurfaceView.queueEvent(). */
+    public void onThrustPress() {
+        thrustHeld = true;
+        if (grounded && fuel > MIN_FUEL_FOR_HOP) {
+            verticalVelocity = INITIAL_HOP_VELOCITY;
+            grounded = false;
+        }
     }
 
     /** Call via glSurfaceView.queueEvent(). */
+    public void onThrustRelease() {
+        thrustHeld = false;
+    }
+
+    public float getFuelPercent() {
+        return fuel / FUEL_MAX;
+    }
+
     public void switchWeapon() {
         currentWeapon = (currentWeapon + 1) % 2;
     }
 
-    /** Call via glSurfaceView.queueEvent(). */
     public void manualReload() {
         int w = currentWeapon;
         if (!reloadingPerWeapon[w] && ammoPerWeapon[w] < WEAPON_MAG_SIZE[w]) {
@@ -254,6 +322,32 @@ public class GameRenderer implements GLSurfaceView.Renderer {
         return completionTimeMs;
     }
 
+    public boolean isBattleRoyaleMode() {
+        return battleRoyaleMode;
+    }
+
+    public float getBrHealthPercent() {
+        return Math.max(0f, brHealth / BR_MAX_HEALTH);
+    }
+
+    public boolean isBrEliminated() {
+        return brEliminated;
+    }
+
+    public boolean isBrSurvived() {
+        return brSurvived;
+    }
+
+    public long getBrSurvivalMs() {
+        return brSurvivalMs;
+    }
+
+    public boolean isInDangerZone() {
+        if (!battleRoyaleMode) return false;
+        float dist = (float) Math.sqrt(playerX * playerX + playerZ * playerZ);
+        return dist > currentZoneRadius;
+    }
+
     /** Call via glSurfaceView.queueEvent(). */
     public void tryShoot() {
         int w = currentWeapon;
@@ -287,10 +381,10 @@ public class GameRenderer implements GLSurfaceView.Renderer {
 
             int gx = Math.round(px / 2f);
             int gz = Math.round(pz / 2f);
-            if (gx < -GRID_SIZE || gx >= GRID_SIZE || gz < -GRID_SIZE || gz >= GRID_SIZE) continue;
+            if (gx < -gridSize || gx >= gridSize || gz < -gridSize || gz >= gridSize) continue;
 
-            int ix = gx + GRID_SIZE;
-            int iz = gz + GRID_SIZE;
+            int ix = gx + gridSize;
+            int iz = gz + gridSize;
             if (!blockExists[ix][iz]) continue;
 
             float localX = px - gx * 2f;
@@ -323,7 +417,8 @@ public class GameRenderer implements GLSurfaceView.Renderer {
 
     @Override
     public void onSurfaceCreated(GL10 gl, EGLConfig config) {
-        GLES20.glClearColor(0.04f, 0.05f, 0.08f, 1f);
+        float[] sky = MAP_SKY_COLORS[mapIndex];
+        GLES20.glClearColor(sky[0], sky[1], sky[2], sky[3]);
         GLES20.glEnable(GLES20.GL_DEPTH_TEST);
 
         int vertexShader = compileShader(GLES20.GL_VERTEX_SHADER, VERTEX_SHADER);
@@ -342,7 +437,7 @@ public class GameRenderer implements GLSurfaceView.Renderer {
     public void onSurfaceChanged(GL10 gl, int width, int height) {
         GLES20.glViewport(0, 0, width, height);
         float aspect = (float) width / height;
-        Matrix.perspectiveM(projectionMatrix, 0, 60f, aspect, 0.5f, 200f);
+        Matrix.perspectiveM(projectionMatrix, 0, FOV_DEGREES, aspect, 0.5f, 260f);
     }
 
     @Override
@@ -351,25 +446,27 @@ public class GameRenderer implements GLSurfaceView.Renderer {
 
         animTime += 1f;
 
-        if (demolitionMode && !gameWon && !gameLost) {
-            if (getTimeRemainingMs() <= 0) {
-                gameLost = true;
-            }
+        if (demolitionMode && !gameWon && !gameLost && getTimeRemainingMs() <= 0) {
+            gameLost = true;
         }
 
-        if (jumpRequested) {
-            jumpRequested = false;
-            if (grounded) {
-                verticalVelocity = JUMP_VELOCITY;
-                grounded = false;
-            }
+        boolean thrusting = thrustHeld && fuel > 0f;
+        if (thrusting) {
+            verticalVelocity += JETPACK_ACCEL;
+            fuel = Math.max(0f, fuel - FUEL_DRAIN_PER_FRAME);
+        } else {
+            fuel = Math.min(FUEL_MAX, fuel + FUEL_REGEN_PER_FRAME);
         }
         verticalVelocity += GRAVITY;
+        if (verticalVelocity > MAX_RISE_VELOCITY) verticalVelocity = MAX_RISE_VELOCITY;
+        if (verticalVelocity < MAX_FALL_VELOCITY) verticalVelocity = MAX_FALL_VELOCITY;
         playerY += verticalVelocity;
         if (playerY <= 0f) {
             playerY = 0f;
             verticalVelocity = 0f;
             grounded = true;
+        } else {
+            grounded = false;
         }
 
         float yawNow = yaw;
@@ -387,6 +484,23 @@ public class GameRenderer implements GLSurfaceView.Renderer {
 
         playerX += (moveForwardX * forwardAmount + moveRightX * strafeAmount) * MOVE_SPEED;
         playerZ += (moveForwardZ * forwardAmount + moveRightZ * strafeAmount) * MOVE_SPEED;
+
+        if (battleRoyaleMode && !brEliminated && !brSurvived) {
+            long elapsed = SystemClock.uptimeMillis() - brStartUptimeMs;
+            float t = Math.min(1f, elapsed / (float) BR_DURATION_MS);
+            currentZoneRadius = brInitialRadius + (BR_FINAL_RADIUS - brInitialRadius) * t;
+
+            if (elapsed >= BR_DURATION_MS) {
+                brSurvived = true;
+            } else if (isInDangerZone()) {
+                brHealth -= BR_ZONE_DAMAGE_PER_SEC / 60f;
+                if (brHealth <= 0f) {
+                    brHealth = 0f;
+                    brEliminated = true;
+                    brSurvivalMs = elapsed;
+                }
+            }
+        }
 
         float cosPitch = (float) Math.cos(pitchNow);
         float lookDirX = (float) Math.sin(yawNow) * cosPitch;
@@ -420,16 +534,27 @@ public class GameRenderer implements GLSurfaceView.Renderer {
 
         GLES20.glUseProgram(program);
 
-        for (int x = -GRID_SIZE; x < GRID_SIZE; x++) {
-            for (int z = -GRID_SIZE; z < GRID_SIZE; z++) {
-                int ix = x + GRID_SIZE;
-                int iz = z + GRID_SIZE;
+        float[] groundColor = MAP_GROUND_COLORS[mapIndex];
+
+        for (int x = -gridSize; x < gridSize; x++) {
+            for (int z = -gridSize; z < gridSize; z++) {
+                int ix = x + gridSize;
+                int iz = z + gridSize;
                 if (!blockExists[ix][iz]) continue;
+
                 Matrix.setIdentityM(modelMatrix, 0);
                 Matrix.translateM(modelMatrix, 0, x * 2f, 0f, z * 2f);
                 Matrix.multiplyMM(mvpMatrix, 0, vpMatrix, 0, modelMatrix, 0);
-                boolean isTarget = demolitionMode && targetBlocks != null && targetBlocks[ix][iz];
-                cube.draw(program, mvpMatrix, isTarget ? TARGET_COLOR : GROUND_COLOR);
+
+                float[] color = groundColor;
+                if (demolitionMode && targetBlocks != null && targetBlocks[ix][iz]) {
+                    color = TARGET_COLOR;
+                } else if (battleRoyaleMode) {
+                    float wx = x * 2f, wz = z * 2f;
+                    float dist = (float) Math.sqrt(wx * wx + wz * wz);
+                    if (dist > currentZoneRadius) color = ZONE_DANGER_COLOR;
+                }
+                cube.draw(program, mvpMatrix, color);
             }
         }
 
@@ -466,6 +591,28 @@ public class GameRenderer implements GLSurfaceView.Renderer {
         drawSwingingSpherePart(-0.5f, ARM_SHOULDER_Y, 0f, armSwingDeg, ARM_HAND_OFFSET, 0.14f, SKIN_COLOR);
 
         drawSpherePart(0f, ARM_SHOULDER_Y + HEAD_RADIUS + 0.08f, 0f, HEAD_RADIUS, SKIN_COLOR);
+
+        drawHeldWeapon(-armSwingDeg);
+
+        if (thrustHeld && fuel > 0f) {
+            drawJetpackFlames();
+        }
+    }
+
+    private void drawJetpackFlames() {
+        float flicker = 0.7f + 0.3f * (float) Math.sin(animTime * 0.9f);
+        float[] flame = {FLAME_COLOR[0], FLAME_COLOR[1] * flicker, FLAME_COLOR[2], 1f};
+        drawPart(0.18f, -0.12f, 0f, 0.07f, 0.10f * flicker, 0.07f, flame);
+        drawPart(-0.18f, -0.12f, 0f, 0.07f, 0.10f * flicker, 0.07f, flame);
+    }
+
+    /** Gun held in the right hand — same swing/pivot chain as the right arm. */
+    private void drawHeldWeapon(float rightArmSwingDeg) {
+        System.arraycopy(characterMatrix, 0, weaponBaseMatrix, 0, 16);
+        Matrix.translateM(weaponBaseMatrix, 0, 0.5f, ARM_SHOULDER_Y, 0f);
+        Matrix.rotateM(weaponBaseMatrix, 0, rightArmSwingDeg, 1f, 0f, 0f);
+        Matrix.translateM(weaponBaseMatrix, 0, 0.02f, -ARM_HAND_OFFSET - 0.03f, 0.05f);
+        drawWeaponParts(weaponBaseMatrix, vpMatrix);
     }
 
     /**
@@ -478,38 +625,44 @@ public class GameRenderer implements GLSurfaceView.Renderer {
     private void drawViewmodel() {
         long sinceFire = SystemClock.uptimeMillis() - lastFireUptimeMs;
         float recoilT = sinceFire < RECOIL_DURATION_MS ? 1f - (sinceFire / (float) RECOIL_DURATION_MS) : 0f;
-        float recoilKickZ = recoilT * 0.12f;
-        float recoilLiftY = recoilT * 0.05f;
+        float recoilKickZ = recoilT * 0.10f;
+        float recoilLiftY = recoilT * 0.04f;
 
         float bobX = (float) Math.sin(animTime * IDLE_BOB_RATE * 0.6f) * 0.01f;
         float bobY = (float) Math.cos(animTime * IDLE_BOB_RATE * 0.6f) * 0.008f;
 
         Matrix.setIdentityM(viewmodelMatrix, 0);
         Matrix.translateM(viewmodelMatrix, 0,
-                0.40f + bobX,
-                -0.32f + bobY + recoilLiftY,
-                -0.85f + recoilKickZ);
+                0.34f + bobX,
+                -0.26f + bobY + recoilLiftY,
+                -0.62f + recoilKickZ);
         Matrix.rotateM(viewmodelMatrix, 0, -6f, 0f, 1f, 0f);
         Matrix.rotateM(viewmodelMatrix, 0, 4f, 1f, 0f, 0f);
 
+        drawWeaponParts(viewmodelMatrix, projectionMatrix);
+    }
+
+    /** Shared gun geometry — used for both the FPP viewmodel and the TPP held weapon. */
+    private void drawWeaponParts(float[] baseMatrix, float[] vp) {
         if (currentWeapon == WEAPON_PISTOL) {
-            drawViewmodelPart(0f, 0f, 0.05f, 0.045f, 0.045f, 0.16f, METAL_MID);
-            drawViewmodelPart(0f, -0.08f, -0.04f, 0.035f, 0.09f, 0.045f, GRIP_COLOR);
+            drawWeaponPart(baseMatrix, vp, 0f, 0f, 0.05f, 0.045f, 0.045f, 0.16f, METAL_MID);
+            drawWeaponPart(baseMatrix, vp, 0f, -0.08f, -0.04f, 0.035f, 0.09f, 0.045f, GRIP_COLOR);
         } else {
-            drawViewmodelPart(0f, 0.02f, 0.18f, 0.03f, 0.03f, 0.30f, METAL_DARK);
-            drawViewmodelPart(0f, 0.0f, -0.02f, 0.06f, 0.07f, 0.20f, METAL_MID);
-            drawViewmodelPart(0f, -0.01f, -0.20f, 0.045f, 0.05f, 0.14f, METAL_DARK);
-            drawViewmodelPart(0f, -0.14f, 0.02f, 0.03f, 0.13f, 0.045f, METAL_DARK);
-            drawViewmodelPart(0f, -0.08f, -0.08f, 0.03f, 0.08f, 0.04f, GRIP_COLOR);
+            drawWeaponPart(baseMatrix, vp, 0f, 0.02f, 0.18f, 0.03f, 0.03f, 0.30f, METAL_DARK);
+            drawWeaponPart(baseMatrix, vp, 0f, 0.0f, -0.02f, 0.06f, 0.07f, 0.20f, METAL_MID);
+            drawWeaponPart(baseMatrix, vp, 0f, -0.01f, -0.20f, 0.045f, 0.05f, 0.14f, METAL_DARK);
+            drawWeaponPart(baseMatrix, vp, 0f, -0.14f, 0.02f, 0.03f, 0.13f, 0.045f, METAL_DARK);
+            drawWeaponPart(baseMatrix, vp, 0f, -0.08f, -0.08f, 0.03f, 0.08f, 0.04f, GRIP_COLOR);
         }
     }
 
-    private void drawViewmodelPart(float ox, float oy, float oz, float sx, float sy, float sz, float[] color) {
-        System.arraycopy(viewmodelMatrix, 0, viewmodelPartMatrix, 0, 16);
-        Matrix.translateM(viewmodelPartMatrix, 0, ox, oy, oz);
-        Matrix.scaleM(viewmodelPartMatrix, 0, sx, sy, sz);
-        Matrix.multiplyMM(viewmodelMvp, 0, projectionMatrix, 0, viewmodelPartMatrix, 0);
-        cube.draw(program, viewmodelMvp, color);
+    private void drawWeaponPart(float[] baseMatrix, float[] vp, float ox, float oy, float oz,
+                                 float sx, float sy, float sz, float[] color) {
+        System.arraycopy(baseMatrix, 0, weaponTempMatrix, 0, 16);
+        Matrix.translateM(weaponTempMatrix, 0, ox, oy, oz);
+        Matrix.scaleM(weaponTempMatrix, 0, sx, sy, sz);
+        Matrix.multiplyMM(weaponMvpTemp, 0, vp, 0, weaponTempMatrix, 0);
+        cube.draw(program, weaponMvpTemp, color);
     }
 
     private void drawPart(float ox, float oy, float oz, float sx, float sy, float sz, float[] color) {
