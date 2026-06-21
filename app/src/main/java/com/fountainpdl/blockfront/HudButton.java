@@ -18,7 +18,7 @@ public class HudButton extends View {
     private final Paint bgPaint = new Paint();
     private final Paint textPaint = new Paint();
     private final RectF rect = new RectF();
-    private final String label;
+    private String label;
     private boolean pressed = false;
     private OnTapListener listener;
 
@@ -28,13 +28,20 @@ public class HudButton extends View {
         bgPaint.setAntiAlias(true);
         textPaint.setAntiAlias(true);
         textPaint.setColor(Color.rgb(212, 175, 55));
-        textPaint.setTextSize(28f);
+        textPaint.setTextSize(26f);
         textPaint.setTextAlign(Paint.Align.CENTER);
         textPaint.setFakeBoldText(true);
     }
 
     public void setOnTapListener(OnTapListener l) {
         this.listener = l;
+    }
+
+    public void setLabel(String label) {
+        if (!label.equals(this.label)) {
+            this.label = label;
+            postInvalidate();
+        }
     }
 
     @Override

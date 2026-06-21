@@ -24,6 +24,7 @@ public class MainActivity extends Activity {
     private TextView ammoText;
     private TextView targetsText;
     private TextView timerText;
+    private HudButton weaponButton;
     private FrameLayout resultOverlay;
     private TextView resultTitle;
     private TextView resultSubtitle;
@@ -80,6 +81,25 @@ public class MainActivity extends Activity {
         timerParams.topMargin = 66;
         root.addView(timerText, timerParams);
 
+        // --- Top-left: weapon name / switch ---
+        weaponButton = new HudButton(this, gameRenderer.getWeaponName());
+        FrameLayout.LayoutParams weaponParams = new FrameLayout.LayoutParams(170, 80);
+        weaponParams.gravity = Gravity.TOP | Gravity.START;
+        weaponParams.setMargins(40, 40, 0, 0);
+        weaponButton.setLayoutParams(weaponParams);
+        weaponButton.setOnTapListener(() -> glSurfaceView.queueEvent(gameRenderer::switchWeapon));
+        root.addView(weaponButton);
+
+        // --- Top-right: view toggle ---
+        HudButton viewToggle = new HudButton(this, "VIEW");
+        FrameLayout.LayoutParams viewToggleParams = new FrameLayout.LayoutParams(160, 80);
+        viewToggleParams.gravity = Gravity.TOP | Gravity.END;
+        viewToggleParams.setMargins(0, 40, 40, 0);
+        viewToggle.setLayoutParams(viewToggleParams);
+        viewToggle.setOnTapListener(() -> glSurfaceView.queueEvent(gameRenderer::toggleViewMode));
+        root.addView(viewToggle);
+
+        // --- Bottom-left: joystick + jump ---
         TouchJoystick moveStick = new TouchJoystick(this);
         FrameLayout.LayoutParams stickParams = new FrameLayout.LayoutParams(280, 280);
         stickParams.gravity = Gravity.BOTTOM | Gravity.START;
@@ -87,6 +107,23 @@ public class MainActivity extends Activity {
         moveStick.setLayoutParams(stickParams);
         moveStick.setOnMoveListener((dx, dy) -> gameRenderer.setMoveInput(dx, dy));
         root.addView(moveStick);
+
+        HudButton jumpButton = new HudButton(this, "JUMP");
+        FrameLayout.LayoutParams jumpParams = new FrameLayout.LayoutParams(130, 100);
+        jumpParams.gravity = Gravity.BOTTOM | Gravity.START;
+        jumpParams.setMargins(300, 0, 0, 340);
+        jumpButton.setLayoutParams(jumpParams);
+        jumpButton.setOnTapListener(gameRenderer::tryJump);
+        root.addView(jumpButton);
+
+        // --- Bottom-right: reload, fire, ammo ---
+        HudButton reloadButton = new HudButton(this, "RELOAD");
+        FrameLayout.LayoutParams reloadParams = new FrameLayout.LayoutParams(150, 100);
+        reloadParams.gravity = Gravity.BOTTOM | Gravity.END;
+        reloadParams.setMargins(0, 0, 226, 40);
+        reloadButton.setLayoutParams(reloadParams);
+        reloadButton.setOnTapListener(() -> glSurfaceView.queueEvent(gameRenderer::manualReload));
+        root.addView(reloadButton);
 
         FireButton fireButton = new FireButton(this);
         FrameLayout.LayoutParams fireParams = new FrameLayout.LayoutParams(170, 170);
@@ -106,14 +143,6 @@ public class MainActivity extends Activity {
         ammoParams.setMargins(0, 0, 50, 230);
         ammoText.setLayoutParams(ammoParams);
         root.addView(ammoText);
-
-        HudButton viewToggle = new HudButton(this, "VIEW");
-        FrameLayout.LayoutParams viewToggleParams = new FrameLayout.LayoutParams(160, 80);
-        viewToggleParams.gravity = Gravity.TOP | Gravity.END;
-        viewToggleParams.setMargins(0, 40, 40, 0);
-        viewToggle.setLayoutParams(viewToggleParams);
-        viewToggle.setOnTapListener(() -> glSurfaceView.queueEvent(() -> gameRenderer.toggleViewMode()));
-        root.addView(viewToggle);
 
         // --- Result overlay (Demolition win/lose) ---
         resultOverlay = new FrameLayout(this);
@@ -177,6 +206,7 @@ public class MainActivity extends Activity {
                 ammoText.setText(gameRenderer.getCurrentAmmo() + " / " + gameRenderer.getMagSize());
             }
             crosshair.setHit(gameRenderer.isRecentHit());
+            weaponButton.setLabel(gameRenderer.getWeaponName());
 
             if (gameRenderer.isDemolitionMode()) {
                 targetsText.setVisibility(View.VISIBLE);
