@@ -11,9 +11,6 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-/** Main menu: a featured Battle Royale card, Demolition/Sandbox/Campaign
- *  cards, and a Settings/Credits/Quit row — the fountain loop runs as an
- *  ambient backdrop behind everything. */
 public class MenuActivity extends Activity {
 
     @Override
@@ -25,115 +22,109 @@ public class MenuActivity extends Activity {
         root.setBackgroundColor(Color.BLACK);
 
         FountainSplashView fountain = new FountainSplashView(this);
-        root.addView(fountain, new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        root.addView(fountain, matchParent());
 
         TextView title = new TextView(this);
         title.setText("BLOCK FRONT");
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(32f);
-        title.getPaint().setFakeBoldText(true);
-        title.setLetterSpacing(0.08f);
-        FrameLayout.LayoutParams titleParams = new FrameLayout.LayoutParams(
+        title.setTextColor(Color.WHITE); title.setTextSize(30f);
+        title.getPaint().setFakeBoldText(true); title.setLetterSpacing(0.08f);
+        FrameLayout.LayoutParams tp = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
-        titleParams.gravity = Gravity.CENTER_HORIZONTAL | Gravity.TOP;
-        titleParams.topMargin = 30;
-        root.addView(title, titleParams);
+        tp.gravity = Gravity.CENTER_HORIZONTAL | Gravity.TOP; tp.topMargin = 22;
+        root.addView(title, tp);
 
-        TextView subtitle = new TextView(this);
-        subtitle.setText("a FountainPDL Ministries production");
-        subtitle.setTextColor(Color.rgb(212, 175, 55));
-        subtitle.setTextSize(12f);
-        FrameLayout.LayoutParams subtitleParams = new FrameLayout.LayoutParams(
+        TextView sub = new TextView(this);
+        sub.setText("a FountainPDL Ministries production");
+        sub.setTextColor(Color.rgb(212,175,55)); sub.setTextSize(11f);
+        FrameLayout.LayoutParams sp = new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
-        subtitleParams.gravity = Gravity.CENTER_HORIZONTAL | Gravity.TOP;
-        subtitleParams.topMargin = 78;
-        root.addView(subtitle, subtitleParams);
+        sp.gravity = Gravity.CENTER_HORIZONTAL | Gravity.TOP; sp.topMargin = 66;
+        root.addView(sub, sp);
 
         LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
-        FrameLayout.LayoutParams columnParams = new FrameLayout.LayoutParams(
-                620, FrameLayout.LayoutParams.WRAP_CONTENT);
-        columnParams.gravity = Gravity.CENTER;
-        columnParams.topMargin = 30;
-        root.addView(column, columnParams);
+        FrameLayout.LayoutParams cp = new FrameLayout.LayoutParams(620,
+                FrameLayout.LayoutParams.WRAP_CONTENT);
+        cp.gravity = Gravity.CENTER; cp.topMargin = 22;
+        root.addView(column, cp);
 
-        CardButton battleRoyale = new CardButton(this, "BATTLE ROYALE",
-                "Shrinking zone \u00b7 jetpack \u00b7 solo survival", Color.rgb(212, 175, 55));
-        battleRoyale.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 150));
-        battleRoyale.setOnTapListener(() -> goToMapSelect("battleroyale"));
-        column.addView(battleRoyale);
-
+        column.addView(modeCard("BATTLE ROYALE",
+                "Shrinking zone \u00b7 7 bots \u00b7 jetpack \u00b7 solo survival",
+                Color.rgb(212,175,55), 132, "battleroyale"));
+        column.addView(spacer(11));
+        column.addView(modeCard("FREE-FOR-ALL",
+                "5 bots \u00b7 2 minutes \u00b7 most kills wins",
+                Color.rgb(190,90,170), 100, "ffa"));
+        column.addView(spacer(11));
+        column.addView(modeCard("DEMOLITION",
+                "Clear 15 targets before the clock runs out",
+                Color.rgb(190,70,60), 100, "demolition"));
+        column.addView(spacer(11));
+        column.addView(modeCard("SANDBOX",
+                "Free roam, unlimited ammo, no objectives",
+                Color.rgb(80,150,90), 100, "sandbox"));
+        column.addView(spacer(11));
+        column.addView(campaignCard());
         column.addView(spacer(16));
-
-        CardButton demolition = new CardButton(this, "DEMOLITION",
-                "Clear 15 targets before the clock runs out", Color.rgb(190, 70, 60));
-        demolition.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 116));
-        demolition.setOnTapListener(() -> goToMapSelect("demolition"));
-        column.addView(demolition);
-
-        column.addView(spacer(14));
-
-        CardButton sandbox = new CardButton(this, "SANDBOX",
-                "Free roam, unlimited ammo, no objectives", Color.rgb(80, 150, 90));
-        sandbox.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 116));
-        sandbox.setOnTapListener(() -> goToMapSelect("sandbox"));
-        column.addView(sandbox);
-
-        column.addView(spacer(14));
-
-        CardButton campaign = new CardButton(this, "CAMPAIGN",
-                "Story missions", Color.rgb(120, 120, 125));
-        campaign.setLayoutParams(new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 116));
-        campaign.setOnTapListener(() -> startActivity(new Intent(this, CampaignActivity.class)));
-        column.addView(campaign);
-
-        column.addView(spacer(22));
 
         LinearLayout bottomRow = new LinearLayout(this);
         bottomRow.setOrientation(LinearLayout.HORIZONTAL);
         column.addView(bottomRow, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        bottomRow.addView(smallButton("SETTINGS",
-                () -> startActivity(new Intent(this, SettingsActivity.class))));
-        bottomRow.addView(rowSpacer());
-        bottomRow.addView(smallButton("CREDITS",
-                () -> startActivity(new Intent(this, CreditsActivity.class))));
-        bottomRow.addView(rowSpacer());
-        bottomRow.addView(smallButton("QUIT", this::finishAffinity));
+        bottomRow.addView(smallBtn("SETTINGS", () -> startActivity(new Intent(this, SettingsActivity.class))));
+        bottomRow.addView(gap());
+        bottomRow.addView(smallBtn("CREDITS",  () -> startActivity(new Intent(this, CreditsActivity.class))));
+        bottomRow.addView(gap());
+        bottomRow.addView(smallBtn("QUIT", this::finishAffinity));
 
         setContentView(root);
     }
 
-    private HudButton smallButton(String label, Runnable action) {
+    private CardButton modeCard(String title, String subtitle, int accent, int height, String mode) {
+        CardButton card = new CardButton(this, title, subtitle, accent);
+        card.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, height));
+        card.setOnTapListener(() -> {
+            Intent i = new Intent(this, MapSelectActivity.class);
+            i.putExtra("mode", mode);
+            startActivity(i);
+        });
+        return card;
+    }
+
+    private CardButton campaignCard() {
+        CardButton card = new CardButton(this, "CAMPAIGN", "Story missions",
+                Color.rgb(120,120,125));
+        card.setLayoutParams(new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 100));
+        card.setOnTapListener(() -> startActivity(new Intent(this, CampaignActivity.class)));
+        return card;
+    }
+
+    private HudButton smallBtn(String label, Runnable action) {
         HudButton button = new HudButton(this, label);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, 90, 1f);
-        button.setLayoutParams(params);
+        LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, 80, 1f);
+        button.setLayoutParams(p);
         button.setOnTapListener(action::run);
         return button;
     }
 
-    private View rowSpacer() {
+    private View gap() {
         View v = new View(this);
-        v.setLayoutParams(new LinearLayout.LayoutParams(16, LinearLayout.LayoutParams.MATCH_PARENT));
+        v.setLayoutParams(new LinearLayout.LayoutParams(14, LinearLayout.LayoutParams.MATCH_PARENT));
         return v;
     }
 
-    private View spacer(int height) {
+    private View spacer(int h) {
         View v = new View(this);
-        v.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, height));
+        v.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, h));
         return v;
     }
 
-    private void goToMapSelect(String mode) {
-        Intent intent = new Intent(this, MapSelectActivity.class);
-        intent.putExtra("mode", mode);
-        startActivity(intent);
+    private FrameLayout.LayoutParams matchParent() {
+        return new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT);
     }
 
     @Override
@@ -154,3 +145,4 @@ public class MenuActivity extends Activity {
                         | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
     }
 }
+
