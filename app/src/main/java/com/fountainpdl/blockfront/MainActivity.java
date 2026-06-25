@@ -16,279 +16,195 @@ import android.widget.TextView;
 
 public class MainActivity extends Activity {
 
-    private static final long HUD_POLL_MS = 80;
+    private static final long POLL = 80;
 
-    private GLSurfaceView glSurfaceView;
-    private GameRenderer gameRenderer;
+    private GLSurfaceView gl;
+    private GameRenderer gr;
     private CrosshairView crosshair;
     private TextView ammoText, fuelText, targetsText, timerText;
     private TextView healthText, zoneText, killsText, botsText;
-    private HudButton weaponButton;
+    private TextView pickupText, slot2Text;
+    private HudButton weaponBtn;
     private FrameLayout resultOverlay;
-    private TextView resultTitle, resultSubtitle;
-    private final Handler hudHandler = new Handler(Looper.getMainLooper());
-    private Runnable hudPoller;
+    private TextView resultTitle, resultSub;
+    private final Handler h = new Handler(Looper.getMainLooper());
+    private Runnable poller;
 
     @Override
-    protected void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
+    protected void onCreate(Bundle s) {
+        super.onCreate(s);
         hideSystemUI();
 
-        String mode = getIntent().getStringExtra("mode");
-        if (mode == null) mode = "sandbox";
-        String mapId = getIntent().getStringExtra("map");
-        if (mapId == null) mapId = "grasslands";
+        String mode = getIntent().getStringExtra("mode"); if (mode==null) mode="sandbox";
+        String map  = getIntent().getStringExtra("map");  if (map==null)  map ="grasslands";
 
         FrameLayout root = new FrameLayout(this);
 
-        glSurfaceView = new GLSurfaceView(this);
-        glSurfaceView.setEGLContextClientVersion(2);
-        gameRenderer = new GameRenderer(this, mode, mapId);
-        glSurfaceView.setRenderer(gameRenderer);
-        glSurfaceView.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
-        root.addView(glSurfaceView, matchParent());
+        gl = new GLSurfaceView(this);
+        gl.setEGLContextClientVersion(2);
+        gr = new GameRenderer(this, mode, map);
+        gl.setRenderer(gr);
+        gl.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
+        root.addView(gl, mp());
 
-        LookSurfaceView lookSurface = new LookSurfaceView(this);
-        lookSurface.setOnLookListener((dx, dy) -> gameRenderer.addLookDelta(dx, dy));
-        root.addView(lookSurface, matchParent());
+        LookSurfaceView lv = new LookSurfaceView(this);
+        lv.setOnLookListener((dx,dy)->gr.addLookDelta(dx,dy));
+        root.addView(lv, mp());
 
-        crosshair = new CrosshairView(this);
-        FrameLayout.LayoutParams chp = new FrameLayout.LayoutParams(64, 64);
-        chp.gravity = Gravity.CENTER;
-        root.addView(crosshair, chp);
+        crosshair=new CrosshairView(this); FrameLayout.LayoutParams cp=new FrameLayout.LayoutParams(64,64); cp.gravity=Gravity.CENTER; root.addView(crosshair,cp);
 
-        targetsText = hudLabel(Color.rgb(212, 175, 55));  root.addView(targetsText, topCenter(36));
-        timerText   = hudLabel(Color.WHITE);              root.addView(timerText,   topCenter(66));
-        healthText  = hudLabel(Color.rgb(220, 70, 60));   root.addView(healthText,  topCenter(36));
-        zoneText    = hudLabel(Color.rgb(190, 120, 220)); root.addView(zoneText,    topCenter(66));
-        killsText   = hudLabel(Color.rgb(212, 175, 55));  root.addView(killsText,   topCenter(96));
-        botsText    = hudLabel(Color.WHITE);              root.addView(botsText,    topCenter(126));
+        targetsText=hlab(Color.rgb(212,175,55)); root.addView(targetsText, tc(36));
+        timerText  =hlab(Color.WHITE);           root.addView(timerText,   tc(66));
+        healthText =hlab(Color.rgb(220,70,60));  root.addView(healthText,  tc(36));
+        zoneText   =hlab(Color.rgb(190,120,220));root.addView(zoneText,    tc(66));
+        killsText  =hlab(Color.rgb(212,175,55)); root.addView(killsText,   tc(96));
+        botsText   =hlab(Color.WHITE);           root.addView(botsText,    tc(126));
 
-        weaponButton = new HudButton(this, gameRenderer.getWeaponName());
-        FrameLayout.LayoutParams wp = new FrameLayout.LayoutParams(170, 80);
-        wp.gravity = Gravity.TOP | Gravity.START; wp.setMargins(40,40,0,0);
-        weaponButton.setLayoutParams(wp);
-        weaponButton.setOnTapListener(() -> glSurfaceView.queueEvent(gameRenderer::switchWeapon));
-        root.addView(weaponButton);
+        pickupText =hlab(Color.rgb(255,220,60)); root.addView(pickupText, tc(160));
 
-        HudButton viewToggle = new HudButton(this, "VIEW");
-        FrameLayout.LayoutParams vtp = new FrameLayout.LayoutParams(160, 80);
-        vtp.gravity = Gravity.TOP | Gravity.END; vtp.setMargins(0,40,40,0);
-        viewToggle.setLayoutParams(vtp);
-        viewToggle.setOnTapListener(() -> glSurfaceView.queueEvent(gameRenderer::toggleViewMode));
-        root.addView(viewToggle);
+        // Weapon slot display (bottom-left above joystick)
+        slot2Text = new TextView(this);
+        slot2Text.setTextColor(Color.argb(200,180,180,180));
+        slot2Text.setTextSize(13f);
+        FrameLayout.LayoutParams s2p=new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        s2p.gravity=Gravity.BOTTOM|Gravity.START; s2p.setMargins(40,0,0,340);
+        slot2Text.setLayoutParams(s2p);
+        root.addView(slot2Text);
 
-        TouchJoystick moveStick = new TouchJoystick(this);
-        FrameLayout.LayoutParams sp = new FrameLayout.LayoutParams(280,280);
-        sp.gravity = Gravity.BOTTOM | Gravity.START; sp.setMargins(40,0,0,40);
-        moveStick.setLayoutParams(sp);
-        moveStick.setOnMoveListener((dx, dy) -> gameRenderer.setMoveInput(dx, dy));
-        root.addView(moveStick);
+        weaponBtn=new HudButton(this,gr.getWeaponName());
+        FrameLayout.LayoutParams wp2=new FrameLayout.LayoutParams(170,80); wp2.gravity=Gravity.TOP|Gravity.START; wp2.setMargins(40,40,0,0);
+        weaponBtn.setLayoutParams(wp2);
+        weaponBtn.setOnTapListener(()->gl.queueEvent(gr::switchWeapon));
+        root.addView(weaponBtn);
 
-        HudButton jumpButton = new HudButton(this, "JUMP");
-        FrameLayout.LayoutParams jp = new FrameLayout.LayoutParams(130,100);
-        jp.gravity = Gravity.BOTTOM | Gravity.START; jp.setMargins(300,0,0,340);
-        jumpButton.setLayoutParams(jp);
-        jumpButton.setOnPressListener(() -> glSurfaceView.queueEvent(gameRenderer::onThrustPress));
-        jumpButton.setOnReleaseListener(() -> glSurfaceView.queueEvent(gameRenderer::onThrustRelease));
-        root.addView(jumpButton);
+        HudButton viewBtn=new HudButton(this,"VIEW");
+        FrameLayout.LayoutParams vp3=new FrameLayout.LayoutParams(160,80); vp3.gravity=Gravity.TOP|Gravity.END; vp3.setMargins(0,40,40,0);
+        viewBtn.setLayoutParams(vp3);
+        viewBtn.setOnTapListener(()->gl.queueEvent(gr::toggleViewMode));
+        root.addView(viewBtn);
 
-        fuelText = new TextView(this);
-        fuelText.setTextColor(Color.rgb(212, 175, 55)); fuelText.setTextSize(13f);
-        FrameLayout.LayoutParams fp = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
-        fp.gravity = Gravity.BOTTOM | Gravity.START; fp.setMargins(300,0,0,446);
-        fuelText.setLayoutParams(fp);
+        TouchJoystick stick=new TouchJoystick(this);
+        FrameLayout.LayoutParams sp3=new FrameLayout.LayoutParams(280,280); sp3.gravity=Gravity.BOTTOM|Gravity.START; sp3.setMargins(40,0,0,40);
+        stick.setLayoutParams(sp3);
+        stick.setOnMoveListener((dx,dy)->gr.setMoveInput(dx,dy));
+        root.addView(stick);
+
+        HudButton jumpBtn=new HudButton(this,"JUMP");
+        FrameLayout.LayoutParams jp3=new FrameLayout.LayoutParams(130,100); jp3.gravity=Gravity.BOTTOM|Gravity.START; jp3.setMargins(300,0,0,340);
+        jumpBtn.setLayoutParams(jp3);
+        jumpBtn.setOnPressListener(()->gl.queueEvent(gr::onThrustPress));
+        jumpBtn.setOnReleaseListener(()->gl.queueEvent(gr::onThrustRelease));
+        root.addView(jumpBtn);
+
+        fuelText=new TextView(this); fuelText.setTextColor(Color.rgb(212,175,55)); fuelText.setTextSize(13f);
+        FrameLayout.LayoutParams fp3=new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        fp3.gravity=Gravity.BOTTOM|Gravity.START; fp3.setMargins(300,0,0,446); fuelText.setLayoutParams(fp3);
         root.addView(fuelText);
 
-        HudButton reloadButton = new HudButton(this, "RELOAD");
-        FrameLayout.LayoutParams rp = new FrameLayout.LayoutParams(150,100);
-        rp.gravity = Gravity.BOTTOM | Gravity.END; rp.setMargins(0,0,226,40);
-        reloadButton.setLayoutParams(rp);
-        reloadButton.setOnTapListener(() -> glSurfaceView.queueEvent(gameRenderer::manualReload));
-        root.addView(reloadButton);
+        HudButton reloadBtn=new HudButton(this,"RELOAD");
+        FrameLayout.LayoutParams rp3=new FrameLayout.LayoutParams(150,100); rp3.gravity=Gravity.BOTTOM|Gravity.END; rp3.setMargins(0,0,226,40);
+        reloadBtn.setLayoutParams(rp3);
+        reloadBtn.setOnTapListener(()->gl.queueEvent(gr::manualReload));
+        root.addView(reloadBtn);
 
-        FireButton fireButton = new FireButton(this);
-        FrameLayout.LayoutParams ff = new FrameLayout.LayoutParams(170,170);
-        ff.gravity = Gravity.BOTTOM | Gravity.END; ff.setMargins(0,0,40,40);
-        fireButton.setLayoutParams(ff);
-        fireButton.setOnFireListener(() -> glSurfaceView.queueEvent(() -> gameRenderer.tryShoot()));
-        root.addView(fireButton);
+        FireButton fire=new FireButton(this);
+        FrameLayout.LayoutParams ff=new FrameLayout.LayoutParams(170,170); ff.gravity=Gravity.BOTTOM|Gravity.END; ff.setMargins(0,0,40,40);
+        fire.setLayoutParams(ff);
+        fire.setOnFireListener(()->gl.queueEvent(()->gr.tryShoot()));
+        root.addView(fire);
 
-        ammoText = new TextView(this);
-        ammoText.setTextColor(Color.rgb(212,175,55)); ammoText.setTextSize(16f);
-        ammoText.getPaint().setFakeBoldText(true);
-        FrameLayout.LayoutParams ap = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
-        ap.gravity = Gravity.BOTTOM | Gravity.END; ap.setMargins(0,0,50,230);
-        ammoText.setLayoutParams(ap);
+        ammoText=new TextView(this); ammoText.setTextColor(Color.rgb(212,175,55)); ammoText.setTextSize(16f); ammoText.getPaint().setFakeBoldText(true);
+        FrameLayout.LayoutParams ap3=new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+        ap3.gravity=Gravity.BOTTOM|Gravity.END; ap3.setMargins(0,0,50,230); ammoText.setLayoutParams(ap3);
         root.addView(ammoText);
 
-        resultOverlay = new FrameLayout(this);
-        resultOverlay.setBackgroundColor(Color.argb(215,0,0,0));
-        resultOverlay.setVisibility(View.GONE);
-        root.addView(resultOverlay, matchParent());
+        resultOverlay=new FrameLayout(this); resultOverlay.setBackgroundColor(Color.argb(215,0,0,0)); resultOverlay.setVisibility(View.GONE);
+        root.addView(resultOverlay, mp());
 
-        LinearLayout resultColumn = new LinearLayout(this);
-        resultColumn.setOrientation(LinearLayout.VERTICAL);
-        FrameLayout.LayoutParams rcp = new FrameLayout.LayoutParams(
-                560, FrameLayout.LayoutParams.WRAP_CONTENT);
-        rcp.gravity = Gravity.CENTER;
-        resultOverlay.addView(resultColumn, rcp);
+        LinearLayout rc=new LinearLayout(this); rc.setOrientation(LinearLayout.VERTICAL);
+        FrameLayout.LayoutParams rcp=new FrameLayout.LayoutParams(560,FrameLayout.LayoutParams.WRAP_CONTENT); rcp.gravity=Gravity.CENTER;
+        resultOverlay.addView(rc,rcp);
 
-        resultTitle = new TextView(this);
-        resultTitle.setTextSize(30f); resultTitle.getPaint().setFakeBoldText(true);
-        resultTitle.setGravity(Gravity.CENTER_HORIZONTAL);
-        resultColumn.addView(resultTitle, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        resultTitle=new TextView(this); resultTitle.setTextSize(30f); resultTitle.getPaint().setFakeBoldText(true); resultTitle.setGravity(Gravity.CENTER_HORIZONTAL);
+        rc.addView(resultTitle,lp(FrameLayout.LayoutParams.MATCH_PARENT,FrameLayout.LayoutParams.WRAP_CONTENT,0));
+        resultSub=new TextView(this); resultSub.setTextColor(Color.WHITE); resultSub.setTextSize(16f); resultSub.setGravity(Gravity.CENTER_HORIZONTAL);
+        rc.addView(resultSub,lp(FrameLayout.LayoutParams.MATCH_PARENT,FrameLayout.LayoutParams.WRAP_CONTENT,18));
 
-        resultSubtitle = new TextView(this);
-        resultSubtitle.setTextColor(Color.WHITE); resultSubtitle.setTextSize(16f);
-        resultSubtitle.setGravity(Gravity.CENTER_HORIZONTAL);
-        LinearLayout.LayoutParams subp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        subp.topMargin = 18;
-        resultColumn.addView(resultSubtitle, subp);
+        HudButton retryBtn=new HudButton(this,"RETRY");
+        retryBtn.setLayoutParams(lp(FrameLayout.LayoutParams.MATCH_PARENT,110,50));
+        retryBtn.setOnTapListener(()->{Intent i=getIntent();finish();startActivity(i);});
+        rc.addView(retryBtn);
 
-        HudButton retryButton = new HudButton(this, "RETRY");
-        LinearLayout.LayoutParams retp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 110);
-        retp.topMargin = 50; retryButton.setLayoutParams(retp);
-        retryButton.setOnTapListener(() -> { Intent i = getIntent(); finish(); startActivity(i); });
-        resultColumn.addView(retryButton);
-
-        HudButton menuButton = new HudButton(this, "MENU");
-        LinearLayout.LayoutParams menup = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 110);
-        menup.topMargin = 20; menuButton.setLayoutParams(menup);
-        menuButton.setOnTapListener(() -> { startActivity(new Intent(this, MenuActivity.class)); finish(); });
-        resultColumn.addView(menuButton);
+        HudButton menuBtn=new HudButton(this,"MENU");
+        menuBtn.setLayoutParams(lp(FrameLayout.LayoutParams.MATCH_PARENT,110,20));
+        menuBtn.setOnTapListener(()->{startActivity(new Intent(this,MenuActivity.class));finish();});
+        rc.addView(menuBtn);
 
         setContentView(root);
 
-        hudPoller = () -> {
-            ammoText.setText(gameRenderer.isReloading() ? "RELOADING\u2026"
-                    : gameRenderer.getCurrentAmmo() + " / " + gameRenderer.getMagSize());
-            crosshair.setHit(gameRenderer.isRecentHit());
-            weaponButton.setLabel(gameRenderer.getWeaponName());
-            fuelText.setText("FUEL " + (int)(gameRenderer.getFuelPercent() * 100) + "%");
+        poller=()->{
+            boolean demo=gr.isDemolitionMode(), br=gr.isBattleRoyaleMode(), ffa=gr.isFfaMode();
+            String wname=gr.getWeaponName();
+            ammoText.setText(gr.getCurrentAmmo()<0?"":gr.isReloading()?"RELOADING…":gr.getCurrentAmmo()+" / "+gr.getMagSize());
+            if (wname.equals("UNARMED")) ammoText.setText("UNARMED");
+            crosshair.setHit(gr.isRecentHit());
+            weaponBtn.setLabel(wname);
+            fuelText.setText("JET "+((int)(gr.getFuelPercent()*100))+"%");
+            String s2=gr.getSecondWeaponName();
+            slot2Text.setText(s2.isEmpty()?"":("2: "+s2));
+            String pm=gr.getPickupMessage();
+            pickupText.setText(pm);
+            vis(pickupText,!pm.isEmpty());
 
-            boolean isDemo = gameRenderer.isDemolitionMode();
-            boolean isBr   = gameRenderer.isBattleRoyaleMode();
-            boolean isFfa  = gameRenderer.isFfaMode();
+            vis(targetsText,demo); vis(timerText,demo||ffa);
+            vis(healthText,br||ffa); vis(zoneText,br);
+            vis(killsText,br||ffa); vis(botsText,br||ffa);
 
-            vis(targetsText, isDemo);
-            vis(timerText,   isDemo || isFfa);
-            vis(healthText,  isBr || isFfa);
-            vis(zoneText,    isBr);
-            vis(killsText,   isBr || isFfa);
-            vis(botsText,    isBr || isFfa);
-
-            if (isDemo) {
-                targetsText.setText("TARGETS: " + gameRenderer.getTargetsRemaining());
-                timerText.setText(fmt(gameRenderer.getTimeRemainingMs()));
-                if (gameRenderer.isGameWon() && resultOverlay.getVisibility() != View.VISIBLE)
-                    showResult("MISSION COMPLETE", Color.rgb(212,175,55),
-                            "Cleared in " + fmt(gameRenderer.getCompletionTimeMs()));
-                else if (gameRenderer.isGameLost() && resultOverlay.getVisibility() != View.VISIBLE)
-                    showResult("TIME'S UP", Color.rgb(200,60,50),
-                            gameRenderer.getTargetsRemaining() + " targets remaining");
+            if (demo){
+                targetsText.setText("TARGETS: "+gr.getTargetsRemaining());
+                timerText.setText(fmt(gr.getDemoTimeMs()));
+                if (gr.isGameWon()&&resultOverlay.getVisibility()!=View.VISIBLE)
+                    showResult("MISSION COMPLETE",Color.rgb(212,175,55),"Cleared in "+fmt(gr.getCompletionMs()));
+                else if (gr.isGameLost()&&resultOverlay.getVisibility()!=View.VISIBLE)
+                    showResult("TIME'S UP",Color.rgb(200,60,50),gr.getTargetsRemaining()+" targets left");
             }
-
-            if (isBr || isFfa) {
-                healthText.setText("HP: " + (int)(gameRenderer.getPlayerHealthPercent() * 100));
-                killsText.setText("KILLS: " + gameRenderer.getKillCount());
-                botsText.setText("ENEMIES: " + gameRenderer.getBotsRemaining());
+            if (br||ffa){
+                healthText.setText("HP: "+(int)(gr.getPlayerHealthPercent()*100));
+                killsText.setText("KILLS: "+gr.getKills());
+                botsText.setText("ENEMIES: "+gr.getBotsRemaining());
             }
-
-            if (isBr) {
-                zoneText.setText(gameRenderer.isInDangerZone() ? "OUTSIDE THE ZONE" : "ZONE SAFE");
-                if (gameRenderer.isPlayerEliminated() && resultOverlay.getVisibility() != View.VISIBLE)
-                    showResult("ELIMINATED", Color.rgb(200,60,50),
-                            "Survived " + fmt(gameRenderer.getSurvivalMs())
-                                    + " \u00b7 " + gameRenderer.getKillCount() + " kills");
-                else if (gameRenderer.isBrSurvived() && resultOverlay.getVisibility() != View.VISIBLE)
-                    showResult("ZONE SURVIVED", Color.rgb(212,175,55),
-                            gameRenderer.getKillCount() + " kills \u00b7 held the final circle");
+            if (br){
+                zoneText.setText(gr.isInDangerZone()?"⚠ OUTSIDE ZONE":"ZONE SAFE");
+                if (gr.isPlayerEliminated()&&resultOverlay.getVisibility()!=View.VISIBLE)
+                    showResult("ELIMINATED",Color.rgb(200,60,50),"Survived "+fmt(gr.getSurvivalMs())+" · "+gr.getKills()+" kills");
+                else if (gr.isBrSurvived()&&resultOverlay.getVisibility()!=View.VISIBLE)
+                    showResult("ZONE SURVIVED",Color.rgb(212,175,55),gr.getKills()+" kills · held the final circle");
             }
-
-            if (isFfa) {
-                timerText.setText(fmt(gameRenderer.getModeTimeRemainingMs()));
-                if (gameRenderer.isPlayerEliminated() && resultOverlay.getVisibility() != View.VISIBLE)
-                    showResult("ELIMINATED", Color.rgb(200,60,50),
-                            gameRenderer.getKillCount() + " kills before you went down");
-                else if (gameRenderer.isFfaAllEliminated() && resultOverlay.getVisibility() != View.VISIBLE)
-                    showResult("ALL ENEMIES DOWN", Color.rgb(212,175,55),
-                            gameRenderer.getKillCount() + " kills \u00b7 cleared the field");
-                else if (gameRenderer.isFfaTimeUp() && resultOverlay.getVisibility() != View.VISIBLE)
-                    showResult("TIME'S UP", Color.WHITE,
-                            "Final score: " + gameRenderer.getKillCount() + " kills");
+            if (ffa){
+                timerText.setText(fmt(gr.getModeTimeLeftMs()));
+                if (gr.isPlayerEliminated()&&resultOverlay.getVisibility()!=View.VISIBLE)
+                    showResult("ELIMINATED",Color.rgb(200,60,50),gr.getKills()+" kills before you went down");
+                else if (gr.isFfaAllDown()&&resultOverlay.getVisibility()!=View.VISIBLE)
+                    showResult("ALL DOWN",Color.rgb(212,175,55),gr.getKills()+" kills · cleared the field");
+                else if (gr.isFfaTimeUp()&&resultOverlay.getVisibility()!=View.VISIBLE)
+                    showResult("TIME'S UP",Color.WHITE,"Final: "+gr.getKills()+" kills");
             }
-
-            hudHandler.postDelayed(hudPoller, HUD_POLL_MS);
+            h.postDelayed(poller, POLL);
         };
-        hudHandler.post(hudPoller);
+        h.post(poller);
     }
 
-    private FrameLayout.LayoutParams matchParent() {
-        return new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT);
-    }
+    private FrameLayout.LayoutParams mp(){ return new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT,FrameLayout.LayoutParams.MATCH_PARENT); }
+    private TextView hlab(int col){ TextView t=new TextView(this); t.setTextColor(col); t.setTextSize(15f); t.getPaint().setFakeBoldText(true); t.setVisibility(View.GONE); return t; }
+    private FrameLayout.LayoutParams tc(int top){ FrameLayout.LayoutParams p=new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT,FrameLayout.LayoutParams.WRAP_CONTENT); p.gravity=Gravity.TOP|Gravity.CENTER_HORIZONTAL; p.topMargin=top; return p; }
+    private LinearLayout.LayoutParams lp(int w,int hh,int top){ LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(w,hh); p.topMargin=top; return p; }
+    private void vis(View v,boolean show){ v.setVisibility(show?View.VISIBLE:View.GONE); }
+    private void showResult(String t,int col,String sub){ resultTitle.setText(t); resultTitle.setTextColor(col); resultSub.setText(sub); resultOverlay.setVisibility(View.VISIBLE); }
+    private String fmt(long ms){ long s=ms/1000; return (s/60)+":"+ String.format("%02d",s%60); }
 
-    private TextView hudLabel(int color) {
-        TextView tv = new TextView(this);
-        tv.setTextColor(color); tv.setTextSize(15f);
-        tv.getPaint().setFakeBoldText(true);
-        tv.setVisibility(View.GONE);
-        return tv;
-    }
-
-    private FrameLayout.LayoutParams topCenter(int topMargin) {
-        FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT);
-        p.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
-        p.topMargin = topMargin;
-        return p;
-    }
-
-    private void vis(View v, boolean show) {
-        v.setVisibility(show ? View.VISIBLE : View.GONE);
-    }
-
-    private void showResult(String title, int color, String subtitle) {
-        resultTitle.setText(title); resultTitle.setTextColor(color);
-        resultSubtitle.setText(subtitle);
-        resultOverlay.setVisibility(View.VISIBLE);
-    }
-
-    private String fmt(long ms) {
-        long s = ms / 1000;
-        return (s / 60) + ":" + String.format("%02d", s % 60);
-    }
-
-    @Override protected void onResume() { super.onResume(); glSurfaceView.onResume(); }
-    @Override protected void onPause()  { super.onPause();  glSurfaceView.onPause();  }
-    @Override protected void onDestroy() {
-        super.onDestroy();
-        if (hudPoller != null) hudHandler.removeCallbacks(hudPoller);
-    }
-
-    @Override
-    public void onWindowFocusChanged(boolean hasFocus) {
-        super.onWindowFocusChanged(hasFocus);
-        if (hasFocus) hideSystemUI();
-    }
-
-    private void hideSystemUI() {
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        View decorView = getWindow().getDecorView();
-        decorView.setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                        | View.SYSTEM_UI_FLAG_FULLSCREEN
-                        | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
-    }
+    @Override protected void onResume(){ super.onResume(); gl.onResume(); }
+    @Override protected void onPause(){ super.onPause(); gl.onPause(); }
+    @Override protected void onDestroy(){ super.onDestroy(); if(poller!=null) h.removeCallbacks(poller); }
+    @Override public void onWindowFocusChanged(boolean f){ super.onWindowFocusChanged(f); if(f) hideSystemUI(); }
+    private void hideSystemUI(){ getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY); }
 }
-

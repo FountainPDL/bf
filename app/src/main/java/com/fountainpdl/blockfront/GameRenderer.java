@@ -17,925 +17,841 @@ import java.util.Random;
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
-/**
- * Renderer: first-person / third-person view toggle with an animated voxel
- * player character, jetpack flight, two weapons with a visible viewmodel
- * (also held in TPP), simple AI bots, biome-patched maps, and three
- * objective modes — Demolition, Battle Royale (shrinking zone + bots),
- * and Free-For-All (timed bot deathmatch) — on top of free-roam Sandbox.
- */
 public class GameRenderer implements GLSurfaceView.Renderer {
 
-    private static final String VERTEX_SHADER =
-            "uniform mat4 uMVPMatrix;" +
-            "attribute vec4 vPosition;" +
-            "attribute vec4 vColor;" +
-            "varying vec4 fColor;" +
-            "void main() {" +
-            "  gl_Position = uMVPMatrix * vPosition;" +
-            "  fColor = vColor;" +
-            "}";
+    // ─── Shaders ───────────────────────────────────────────────────────────────
+    private static final String VERT =
+            "uniform mat4 uMVP;attribute vec4 vPos;attribute vec4 vCol;varying vec4 fCol;" +
+            "void main(){gl_Position=uMVP*vPos;fCol=vCol;}";
+    private static final String FRAG =
+            "precision mediump float;varying vec4 fCol;void main(){gl_FragColor=fCol;}";
 
-    private static final String FRAGMENT_SHADER =
-            "precision mediump float;" +
-            "varying vec4 fColor;" +
-            "void main() {" +
-            "  gl_FragColor = fColor;" +
-            "}";
+    // ─── Map ───────────────────────────────────────────────────────────────────
+    private static final int GRID_NORMAL = 12;
+    private static final int GRID_BIG    = 20;
+    private static final float FOV       = 75f;
 
-    private static final int GRID_SIZE_NORMAL = 12;
-    private static final int GRID_SIZE_BIG = 20;
-    private static final float FOV_DEGREES = 75f;
-    private static final float MOVE_SPEED = 0.15f;
-    private static final float LOOK_SENSITIVITY = 0.0025f;
-    private static final float PITCH_LIMIT = (float) Math.toRadians(85);
-    private static final float SHOOT_STEP = 0.1f;
-    private static final float SHOOT_MAX_DIST = 40f;
+    /** Top of ground blocks = 2 × VoxelCube.SIZE = 1.8. Character feet rest here. */
+    private static final float GROUND_Y  = 1.8f;
 
-    private static final float EYE_HEIGHT = 4f;
-    private static final float TPP_DISTANCE = 6f;
-    private static final float TPP_PIVOT_HEIGHT = 1.8f;
-    private static final float TPP_VERTICAL_OFFSET = 1.5f;
-
-    private static final float GRAVITY = -0.02f;
-    private static final float INITIAL_HOP_VELOCITY = 0.16f;
-    private static final float JETPACK_ACCEL = 0.032f;
-    private static final float MAX_RISE_VELOCITY = 0.42f;
-    private static final float MAX_FALL_VELOCITY = -0.6f;
-    private static final float FUEL_MAX = 100f;
-    private static final float FUEL_DRAIN_PER_FRAME = 1.2f;
-    private static final float FUEL_REGEN_PER_FRAME = 0.5f;
-    private static final float MIN_FUEL_FOR_HOP = 10f;
-
-    private static final int WEAPON_PISTOL = 0;
-    private static final int WEAPON_RIFLE = 1;
-    private static final int[] WEAPON_MAG_SIZE = {12, 30};
-    private static final long[] WEAPON_RELOAD_MS = {900, 1500};
-    private static final String[] WEAPON_NAMES = {"PISTOL", "RIFLE"};
-    private static final long RECOIL_DURATION_MS = 160;
-
-    private static final long HIT_FLASH_MS = 150;
-
-    private static final int DEMOLITION_TARGET_COUNT = 15;
-    private static final long DEMOLITION_DURATION_MS = 60000;
-
-    private static final long BR_DURATION_MS = 130000;
-    private static final float BR_FINAL_RADIUS = 3f;
-    private static final float BR_ZONE_DAMAGE_PER_SEC = 14f;
-    private static final int BOT_COUNT_BR = 7;
-
-    private static final long FFA_DURATION_MS = 120000;
-    private static final int BOT_COUNT_FFA = 5;
-
-    private static final float PLAYER_MAX_HEALTH = 100f;
-
-    private static final float BOT_MAX_HEALTH = 100f;
-    private static final float BOT_DETECT_RANGE = 14f;
-    private static final float BOT_ENGAGE_RANGE = 9f;
-    private static final float BOT_MOVE_SPEED = 0.09f;
-    private static final long BOT_SHOT_INTERVAL_MS = 1400;
-    private static final float BOT_HIT_CHANCE = 0.35f;
-    private static final float BOT_DAMAGE = 9f;
-    private static final float BOT_HIT_RADIUS = 0.4f;
-    private static final float BOT_HEIGHT = 2.5f;
-    private static final float BOT_WANDER_RADIUS = 10f;
-
-    private static final int NUM_BIOME_SEEDS = 10;
-    private static final float BIOME_PATCH_RADIUS = 16f;
-    private static final float BIOME_BLEND = 0.5f;
-
-    private static final float[][] MAP_GROUND_COLORS = {
-            {0.18f, 0.45f, 0.22f, 1f}, // grasslands
-            {0.76f, 0.66f, 0.42f, 1f}, // desert
-            {0.86f, 0.88f, 0.92f, 1f}, // snow
+    private static final float[][] SKY_COLORS = {
+            {0.45f,0.65f,0.85f,1f},{0.85f,0.66f,0.36f,1f},{0.75f,0.82f,0.90f,1f},{0.06f,0.07f,0.10f,1f}
     };
-    private static final float[][] MAP_SKY_COLORS = {
-            {0.45f, 0.65f, 0.85f, 1f}, // grasslands
-            {0.85f, 0.66f, 0.36f, 1f}, // desert
-            {0.75f, 0.82f, 0.90f, 1f}, // snow
+    private static final float[][] BASE_COLORS = {
+            {0.18f,0.45f,0.22f,1f},{0.76f,0.66f,0.42f,1f},{0.86f,0.88f,0.92f,1f},{0.22f,0.20f,0.18f,1f}
     };
     private static final float[][] BIOME_TINTS = {
-            {0.10f, 0.32f, 0.14f, 1f}, // forest
-            {0.42f, 0.38f, 0.30f, 1f}, // rocky
-            {0.22f, 0.50f, 0.55f, 1f}, // wetland
+            {0.10f,0.32f,0.14f,1f},{0.42f,0.38f,0.30f,1f},{0.22f,0.50f,0.55f,1f}
     };
 
-    private static final float[] TARGET_COLOR = {0.85f, 0.16f, 0.1f, 1f};
-    private static final float[] ZONE_DANGER_COLOR = {0.30f, 0.10f, 0.26f, 1f};
-    private static final float[] SKIN_COLOR = {0.85f, 0.7f, 0.55f, 1f};
-    private static final float[] SHIRT_COLOR = {0.83f, 0.69f, 0.22f, 1f};
-    private static final float[] ENEMY_SHIRT_COLOR = {0.72f, 0.16f, 0.13f, 1f};
-    private static final float[] PANTS_COLOR = {0.12f, 0.12f, 0.14f, 1f};
-    private static final float[] METAL_DARK = {0.16f, 0.16f, 0.18f, 1f};
-    private static final float[] METAL_MID = {0.32f, 0.32f, 0.35f, 1f};
-    private static final float[] GRIP_COLOR = {0.08f, 0.08f, 0.08f, 1f};
-    private static final float[] FLAME_COLOR = {1f, 0.55f, 0.12f, 1f};
+    // ─── Physics ───────────────────────────────────────────────────────────────
+    private static final float GRAVITY      = -0.020f;
+    private static final float HOP_VEL      =  0.160f;
+    private static final float JET_ACCEL    =  0.032f;
+    private static final float MAX_RISE     =  0.420f;
+    private static final float MAX_FALL     = -0.600f;
+    private static final float FUEL_MAX     = 100f;
+    private static final float FUEL_DRAIN   =   1.2f;
+    private static final float FUEL_REGEN   =   0.5f;
+    private static final float MIN_FUEL_HOP =  10.0f;
 
-    private static final float LEG_HIP_Y = 0.9f;
-    private static final float LEG_SCALE_LEN = 0.5f;
-    private static final float LEG_FOOT_OFFSET = 0.74f; // was 0.85 — that sank feet below y=0
-    private static final float TORSO_OY = 0.9f;
-    private static final float ARM_SHOULDER_Y = 1.7f;
-    private static final float ARM_SCALE_LEN = 0.44f;
-    private static final float ARM_HAND_OFFSET = 0.75f;
-    private static final float HEAD_RADIUS = 0.28f;
-    private static final float MAX_LEG_SWING_DEG = 35f;
-    private static final float MAX_ARM_SWING_DEG = 30f;
-    private static final float WALK_CYCLE_RATE = 0.25f;
-    private static final float IDLE_BOB_AMOUNT = 0.04f;
-    private static final float IDLE_BOB_RATE = 0.05f;
+    // ─── Camera ────────────────────────────────────────────────────────────────
+    private static final float EYE_H       = 4.0f;
+    private static final float TPP_DIST    = 6.0f;
+    private static final float TPP_PIVOT_H = 1.8f;
+    private static final float TPP_VOFF    = 1.5f;
+    private static final float LOOK_SENS   = 0.0025f;
+    private static final float PITCH_MAX   = (float) Math.toRadians(85);
+    private static final float MOVE_SPEED  = 0.15f;
 
+    // ─── Weapons ───────────────────────────────────────────────────────────────
+    private static final int WEAPON_NONE  = -1;
+    private static final int WEAPON_AK47   = 0;
+    private static final int WEAPON_GLOCK  = 1;
+    private static final int WEAPON_SNIPER = 2;
+    private static final int WEAPON_SHOTGUN= 3;
+    private static final int WEAPON_SMG    = 4;
+    private static final int NUM_WEAPONS   = 5;
+
+    private static final int[]    MAG    = {30, 15, 5, 6, 25};
+    private static final long[]   RELOAD_MS = {1800,900,2500,1200,1100};
+    private static final long[]   FIRE_DELAY= {100, 250,1200,650, 70};
+    private static final String[] WPN_NAME  = {"AK-47","GLOCK","SNIPER","SHOTGUN","SMG"};
+    private static final float    SHOOT_STEP= 0.10f;
+    private static final float    SHOOT_MAX = 40f;
+    private static final long     HIT_FLASH = 150;
+    private static final long     RECOIL_MS = 160;
+
+    // ─── Loot ──────────────────────────────────────────────────────────────────
+    private static final float PICKUP_R    = 2.0f;
+    private static final int   LOOT_COUNT  = 20;
+
+    // ─── Battle Royale ─────────────────────────────────────────────────────────
+    private static final long  BR_MS       = 110_000;
+    private static final float BR_FINAL_R  = 3.0f;
+    private static final float BR_DMG_PS   = 16f;
+    private static final int   BOT_BR      = 7;
+
+    // ─── FFA ───────────────────────────────────────────────────────────────────
+    private static final long  FFA_MS      = 120_000;
+    private static final int   BOT_FFA     = 5;
+
+    // ─── Demolition ────────────────────────────────────────────────────────────
+    private static final int  DEMO_TARGETS = 15;
+    private static final long DEMO_MS      = 60_000;
+
+    // ─── Player health ─────────────────────────────────────────────────────────
+    private static final float PLAYER_HP   = 100f;
+    private static final float BOT_HP      = 100f;
+
+    // ─── Bot AI ────────────────────────────────────────────────────────────────
+    private static final float BOT_DETECT  = 14f;
+    private static final float BOT_ENGAGE  = 9f;
+    private static final float BOT_SPEED   = 0.09f;
+    private static final long  BOT_SHOT_MS = 1400;
+    private static final float BOT_MISS    = 0.35f;
+    private static final float BOT_DMG     = 9f;
+    private static final float BOT_HIT_R   = 0.4f;
+    private static final float BOT_WANDER  = 10f;
+
+    // ─── Blocky Roblox character anatomy ──────────────────────────────────────
+    // All Y in character-local space; y=0 = character root (world GROUND_Y)
+    private static final float HIP_Y      = 0.93f;
+    private static final float LEG_OX     = 0.18f;
+    private static final float LEG_SX     = 0.167f;
+    private static final float LEG_SY     = 0.333f;  // length 0.60
+    private static final float LEG_LEN    = 0.60f;
+    private static final float BOOT_SX    = 0.210f;  // wider than leg
+    private static final float BOOT_SY    = 0.183f;  // height 0.33, bottom at y=0 ✓
+    private static final float TORSO_SX   = 0.400f;
+    private static final float TORSO_SY   = 0.361f;  // height 0.65
+    private static final float TORSO_SZ   = 0.222f;
+    private static final float SHOULDER_Y = 1.58f;   // HIP_Y + 0.65
+    private static final float ARM_OX     = 0.52f;
+    private static final float ARM_SX     = 0.167f;
+    private static final float ARM_SY     = 0.444f;  // length 0.80
+    private static final float ARM_LEN    = 0.80f;
+    private static final float FIST_SX    = 0.167f;
+    private static final float FIST_SY    = 0.133f;  // height 0.24
+    private static final float HEAD_Y     = 1.58f;
+    private static final float HEAD_SX    = 0.306f;  // 0.55 wide
+    private static final float HEAD_SY    = 0.306f;  // 0.55 tall
+    private static final float HAIR_Y     = 2.13f;   // HEAD_Y + 0.55
+    private static final float MAX_LEG_SWING = 35f;
+    private static final float MAX_ARM_SWING = 28f;
+    private static final float WALK_RATE    = 0.25f;
+    private static final float IDLE_BOB_A   = 0.04f;
+    private static final float IDLE_BOB_R   = 0.05f;
+
+    // ─── Colors ────────────────────────────────────────────────────────────────
+    private static final float[] C_SKIN   = {0.85f,0.70f,0.55f,1f};
+    private static final float[] C_TACT   = {0.10f,0.10f,0.11f,1f}; // black tactical
+    private static final float[] C_ENEMY  = {0.20f,0.08f,0.08f,1f}; // dark red (enemy)
+    private static final float[] C_BOOT   = {0.32f,0.33f,0.36f,1f}; // grey boot
+    private static final float[] C_HAIR   = {0.07f,0.06f,0.06f,1f}; // near-black
+    private static final float[] C_GROUND = {0.18f,0.45f,0.22f,1f};
+    private static final float[] C_TARGET = {0.85f,0.16f,0.10f,1f};
+    private static final float[] C_ZONE   = {0.30f,0.10f,0.26f,1f};
+    private static final float[] C_LOOT   = {0.95f,0.82f,0.15f,1f}; // gold loot pickup
+    private static final float[] C_METAL_D= {0.16f,0.16f,0.18f,1f};
+    private static final float[] C_METAL_M= {0.32f,0.32f,0.35f,1f};
+    private static final float[] C_GRIP   = {0.08f,0.08f,0.08f,1f};
+    private static final float[] C_WOOD   = {0.55f,0.35f,0.15f,1f};
+    private static final float[] C_SCOPE  = {0.18f,0.18f,0.20f,1f};
+    private static final float[] C_FLAME1 = {1.00f,0.70f,0.15f,1f};
+    private static final float[] C_FLAME2 = {1.00f,0.35f,0.08f,1f};
+
+    // ─── Inner classes ─────────────────────────────────────────────────────────
+    private static class LootItem {
+        float x, z; int weaponType; boolean collected;
+        LootItem(float x, float z, int w) { this.x=x; this.z=z; weaponType=w; }
+    }
+
+    // ─── GL objects ────────────────────────────────────────────────────────────
     private int program;
     private VoxelCube cube;
-    private VoxelSphere sphere;
 
-    private final float[] projectionMatrix = new float[16];
-    private final float[] viewMatrix = new float[16];
-    private final float[] vpMatrix = new float[16];
-    private final float[] modelMatrix = new float[16];
-    private final float[] mvpMatrix = new float[16];
-    private final float[] characterMatrix = new float[16];
-    private final float[] partMatrix = new float[16];
-    private final float[] viewmodelMatrix = new float[16];
-    private final float[] weaponBaseMatrix = new float[16];
-    private final float[] weaponTempMatrix = new float[16];
-    private final float[] weaponMvpTemp = new float[16];
+    // ─── Matrices ──────────────────────────────────────────────────────────────
+    private final float[] proj = new float[16];
+    private final float[] viewModProj = new float[16]; // near=0.05, for viewmodel
+    private final float[] view = new float[16];
+    private final float[] vp   = new float[16];
+    private final float[] mdl  = new float[16];
+    private final float[] mvp  = new float[16];
+    private final float[] charMat  = new float[16];
+    private final float[] partMat  = new float[16];
+    private final float[] wBase    = new float[16];
+    private final float[] wTemp    = new float[16];
+    private final float[] wMvp     = new float[16];
+    private final float[] vmMat    = new float[16];
 
+    // ─── Player state ──────────────────────────────────────────────────────────
     private float playerX, playerZ;
-    private float playerY = 0f;
-    private float verticalVelocity = 0f;
+    private float playerY = GROUND_Y;
+    private float velY    = 0f;
     private boolean grounded = true;
-
     private volatile float yaw = 0f;
     private volatile float pitch = 0f;
-
-    private volatile float moveDx = 0f, moveDz = 0f;
-    private volatile boolean thirdPerson = false;
+    private volatile float moveDx, moveDz;
+    private volatile boolean tpp = false;
     private volatile boolean thrustHeld = false;
     private float fuel = FUEL_MAX;
+    private float playerHealth = PLAYER_HP;
+    private volatile boolean playerEliminated = false;
 
-    private int currentWeapon = WEAPON_RIFLE;
-    private final int[] ammoPerWeapon = {WEAPON_MAG_SIZE[WEAPON_PISTOL], WEAPON_MAG_SIZE[WEAPON_RIFLE]};
-    private final boolean[] reloadingPerWeapon = new boolean[2];
-    private volatile long lastFireUptimeMs = 0;
-    private volatile long lastHitUptimeMs = 0;
+    // ─── Weapon state ──────────────────────────────────────────────────────────
+    private int currentWeapon = WEAPON_AK47;
+    private int secondWeapon  = WEAPON_GLOCK;
+    private final int[]     ammo     = new int[NUM_WEAPONS];
+    private final boolean[] reloading= new boolean[NUM_WEAPONS];
+    private long lastFireMs  = 0;
+    private long lastHitMs   = 0;
+    private long lastPickupMs= 0;
+    private String pickupMsg = "";
 
-    private float walkCyclePhase = 0f;
-    private float animTime = 0f;
+    // ─── Animation ─────────────────────────────────────────────────────────────
+    private float walkPhase = 0f;
+    private float animTime  = 0f;
 
-    private final float lookSensitivityMultiplier;
+    // ─── Settings ──────────────────────────────────────────────────────────────
+    private final float sensitivity;
 
+    // ─── Map / mode ────────────────────────────────────────────────────────────
     private final int gridSize;
-    private final int mapIndex;
-    private final boolean[][] blockExists;
-    private final float[][][] cellBaseColor;
+    private final int mapIdx;
+    private final boolean[][] blocks;
+    private boolean[][] layer2;  // ruins: second block layer for walls/debris
+    private static final float[] C_RUIN2={0.16f,0.14f,0.13f,1f}; // darker ruins wall
+    private final float[][][] cellColor;
 
     private final boolean demolitionMode;
-    private boolean[][] targetBlocks;
-    private volatile int targetsRemaining = 0;
-    private long demolitionStartUptimeMs = 0;
-    private volatile boolean gameWon = false;
-    private volatile boolean gameLost = false;
-    private volatile long completionTimeMs = 0;
-
     private final boolean battleRoyaleMode;
     private final boolean ffaMode;
     private final boolean botsPresent;
-    private final List<Bot> bots = new ArrayList<>();
-    private final Random random = new Random();
-    private volatile int killCount = 0;
 
-    private final float brInitialRadius;
-    private float currentZoneRadius;
-    private long modeStartUptimeMs = 0;
+    // ─── Demolition ────────────────────────────────────────────────────────────
+    private boolean[][] targets;
+    private volatile int targetsLeft = 0;
+    private long demoStart = 0;
+    private volatile boolean gameWon = false;
+    private volatile boolean gameLost = false;
+    private volatile long wonMs = 0;
+
+    // ─── BR / FFA ──────────────────────────────────────────────────────────────
+    private final List<Bot> bots = new ArrayList<>();
+    private final List<LootItem> loot = new ArrayList<>();
+    private final Random rnd = new Random();
+    private volatile int kills = 0;
+    private float brInitR, brZoneR;
+    private long modeStart = 0;
     private volatile boolean brSurvived = false;
     private volatile boolean ffaTimeUp = false;
-    private volatile boolean ffaAllEliminated = false;
-
-    private float playerHealth = PLAYER_MAX_HEALTH;
-    private volatile boolean playerEliminated = false;
+    private volatile boolean ffaAllDown = false;
     private volatile long survivalMs = 0;
 
-    public GameRenderer(Context context, String mode, String mapId) {
-        this.demolitionMode = "demolition".equals(mode);
-        this.battleRoyaleMode = "battleroyale".equals(mode);
-        this.ffaMode = "ffa".equals(mode);
-        this.botsPresent = battleRoyaleMode || ffaMode;
-        this.gridSize = botsPresent ? GRID_SIZE_BIG : GRID_SIZE_NORMAL;
-        this.mapIndex = mapIndexFor(mapId);
-        this.brInitialRadius = gridSize * 2f * 0.9f;
-        this.currentZoneRadius = brInitialRadius;
+    // ──────────────────────────────────────────────────────────────────────────
+    public GameRenderer(Context ctx, String mode, String mapId) {
+        demolitionMode   = "demolition".equals(mode);
+        battleRoyaleMode = "battleroyale".equals(mode);
+        ffaMode          = "ffa".equals(mode);
+        botsPresent      = battleRoyaleMode || ffaMode;
+        gridSize         = botsPresent ? GRID_BIG : GRID_NORMAL;
+        mapIdx           = "desert".equals(mapId)?1:"snow".equals(mapId)?2:"ruins".equals(mapId)?3:0;
 
-        this.blockExists = new boolean[gridSize * 2][gridSize * 2];
-        for (boolean[] row : blockExists) {
-            Arrays.fill(row, true);
-        }
+        blocks    = new boolean[gridSize*2][gridSize*2];
+        for (boolean[] r : blocks) Arrays.fill(r, true);
+        cellColor = botsPresent ? buildBiome() : null;
 
-        this.cellBaseColor = botsPresent ? buildBiomeColors() : null;
+        SharedPreferences p = ctx.getSharedPreferences(SettingsActivity.PREFS_NAME, Context.MODE_PRIVATE);
+        int sp = p.getInt(SettingsActivity.KEY_SENSITIVITY_PERCENT, SettingsActivity.DEFAULT_SENSITIVITY_PERCENT);
+        sensitivity = SettingsActivity.percentToMultiplier(sp);
 
-        SharedPreferences prefs = context.getSharedPreferences(
-                SettingsActivity.PREFS_NAME, Context.MODE_PRIVATE);
-        int sensitivityPercent = prefs.getInt(
-                SettingsActivity.KEY_SENSITIVITY_PERCENT, SettingsActivity.DEFAULT_SENSITIVITY_PERCENT);
-        this.lookSensitivityMultiplier = SettingsActivity.percentToMultiplier(sensitivityPercent);
-
-        if (demolitionMode) {
-            initDemolitionTargets();
-            playerX = 0f;
-            playerZ = 10f;
-        } else if (botsPresent) {
-            modeStartUptimeMs = SystemClock.uptimeMillis();
-            float spawnSpan = (battleRoyaleMode ? brInitialRadius : gridSize * 2f) * 0.65f;
-            float[] spawn = randomOffCenterPoint(spawnSpan);
-            playerX = spawn[0];
-            playerZ = spawn[1];
-            int botCount = battleRoyaleMode ? BOT_COUNT_BR : BOT_COUNT_FFA;
-            for (int i = 0; i < botCount; i++) {
-                float[] p = randomOffCenterPoint(spawnSpan);
-                bots.add(new Bot(p[0], p[1], BOT_MAX_HEALTH));
-            }
+        // Ammo init
+        if (battleRoyaleMode) {
+            // start unarmed
+            currentWeapon = WEAPON_NONE;
+            secondWeapon  = WEAPON_NONE;
+            Arrays.fill(ammo, 0);
         } else {
-            playerX = 0f;
-            playerZ = 10f;
+            for (int i = 0; i < NUM_WEAPONS; i++) ammo[i] = MAG[i];
         }
-    }
 
-    private float[] randomOffCenterPoint(float maxRadius) {
-        float angle = random.nextFloat() * (float) (Math.PI * 2);
-        float dist = maxRadius * (0.35f + random.nextFloat() * 0.65f);
-        return new float[]{(float) Math.cos(angle) * dist, (float) Math.sin(angle) * dist};
-    }
+        brInitR = gridSize * 2f * 0.9f;
+        brZoneR = brInitR;
 
-    private static int mapIndexFor(String mapId) {
-        if ("desert".equals(mapId)) return 1;
-        if ("snow".equals(mapId)) return 2;
-        return 0;
-    }
-
-    /** Voronoi-style biome patches, precomputed once — no per-frame cost. */
-    private float[][][] buildBiomeColors() {
-        float[][][] colors = new float[gridSize * 2][gridSize * 2][];
-        Random biomeRnd = new Random();
-        float[] seedX = new float[NUM_BIOME_SEEDS];
-        float[] seedZ = new float[NUM_BIOME_SEEDS];
-        float[][] seedTint = new float[NUM_BIOME_SEEDS][];
-        float extent = gridSize * 2f;
-        for (int i = 0; i < NUM_BIOME_SEEDS; i++) {
-            seedX[i] = (biomeRnd.nextFloat() * 2f - 1f) * extent;
-            seedZ[i] = (biomeRnd.nextFloat() * 2f - 1f) * extent;
-            seedTint[i] = BIOME_TINTS[biomeRnd.nextInt(BIOME_TINTS.length)];
+        // Spawn player off-center
+        if (botsPresent) {
+            float[] sp2 = offCenterSpawn(brInitR * 0.65f);
+            playerX = sp2[0]; playerZ = sp2[1];
+        } else {
+            playerX = 0f; playerZ = 10f;
         }
-        float[] base = MAP_GROUND_COLORS[mapIndex];
-        for (int x = -gridSize; x < gridSize; x++) {
-            for (int z = -gridSize; z < gridSize; z++) {
-                float wx = x * 2f, wz = z * 2f;
-                int nearest = 0;
-                float bestDist = Float.MAX_VALUE;
-                for (int i = 0; i < NUM_BIOME_SEEDS; i++) {
-                    float dx = wx - seedX[i], dz = wz - seedZ[i];
-                    float d = dx * dx + dz * dz;
-                    if (d < bestDist) {
-                        bestDist = d;
-                        nearest = i;
-                    }
-                }
-                float distToSeed = (float) Math.sqrt(bestDist);
-                float[] color;
-                if (distToSeed > BIOME_PATCH_RADIUS) {
-                    color = base;
-                } else {
-                    float[] tint = seedTint[nearest];
-                    color = new float[]{
-                            base[0] * (1 - BIOME_BLEND) + tint[0] * BIOME_BLEND,
-                            base[1] * (1 - BIOME_BLEND) + tint[1] * BIOME_BLEND,
-                            base[2] * (1 - BIOME_BLEND) + tint[2] * BIOME_BLEND,
-                            1f
-                    };
-                }
-                colors[x + gridSize][z + gridSize] = color;
-            }
-        }
-        return colors;
+        playerY = GROUND_Y;
+
+        if (demolitionMode) initDemo();
+        if (battleRoyaleMode) { modeStart = SystemClock.uptimeMillis(); initLoot(); spawnBots(BOT_BR); }
+        if (ffaMode) { modeStart = SystemClock.uptimeMillis(); spawnBots(BOT_FFA); }
+        if (mapIdx==3) initRuins();
     }
 
-    private void initDemolitionTargets() {
-        targetBlocks = new boolean[gridSize * 2][gridSize * 2];
-        Random rnd = new Random();
+    private float[] offCenterSpawn(float maxR) {
+        float a = rnd.nextFloat() * (float)(Math.PI*2);
+        float d = maxR * (0.35f + rnd.nextFloat() * 0.65f);
+        return new float[]{(float)Math.cos(a)*d, (float)Math.sin(a)*d};
+    }
+
+    private void initDemo() {
+        targets = new boolean[gridSize*2][gridSize*2];
         int placed = 0;
-        while (placed < DEMOLITION_TARGET_COUNT) {
-            int x = rnd.nextInt(gridSize * 2);
-            int z = rnd.nextInt(gridSize * 2);
-            if (!targetBlocks[x][z]) {
-                targetBlocks[x][z] = true;
-                placed++;
-            }
+        while (placed < DEMO_TARGETS) {
+            int x=rnd.nextInt(gridSize*2), z=rnd.nextInt(gridSize*2);
+            if (!targets[x][z]) { targets[x][z]=true; placed++; }
         }
-        targetsRemaining = DEMOLITION_TARGET_COUNT;
-        demolitionStartUptimeMs = SystemClock.uptimeMillis();
+        targetsLeft = DEMO_TARGETS;
+        demoStart = SystemClock.uptimeMillis();
     }
 
-    public void setMoveInput(float dx, float dy) {
-        this.moveDx = dx;
-        this.moveDz = dy;
-    }
-
-    public void addLookDelta(float dxPixels, float dyPixels) {
-        float s = LOOK_SENSITIVITY * lookSensitivityMultiplier;
-        yaw += dxPixels * s;
-        pitch -= dyPixels * s;
-        if (pitch > PITCH_LIMIT) pitch = PITCH_LIMIT;
-        if (pitch < -PITCH_LIMIT) pitch = -PITCH_LIMIT;
-    }
-
-    public void toggleViewMode() {
-        thirdPerson = !thirdPerson;
-    }
-
-    public void onThrustPress() {
-        thrustHeld = true;
-        if (grounded && fuel > MIN_FUEL_FOR_HOP) {
-            verticalVelocity = INITIAL_HOP_VELOCITY;
-            grounded = false;
+    private void initLoot() {
+        int[] pool = {WEAPON_AK47,WEAPON_AK47,WEAPON_GLOCK,WEAPON_GLOCK,WEAPON_SNIPER,
+                      WEAPON_SHOTGUN,WEAPON_SHOTGUN,WEAPON_SMG,WEAPON_SMG,WEAPON_SMG,
+                      WEAPON_AK47,WEAPON_GLOCK,WEAPON_SNIPER,WEAPON_SHOTGUN,WEAPON_SMG,
+                      WEAPON_AK47,WEAPON_GLOCK,WEAPON_SMG,WEAPON_SNIPER,WEAPON_SHOTGUN};
+        for (int i = 0; i < LOOT_COUNT; i++) {
+            float[] pos = offCenterSpawn(gridSize * 1.4f);
+            loot.add(new LootItem(pos[0], pos[1], pool[i % pool.length]));
         }
     }
 
-    public void onThrustRelease() {
-        thrustHeld = false;
-    }
-
-    public float getFuelPercent() {
-        return fuel / FUEL_MAX;
-    }
-
-    public void switchWeapon() {
-        currentWeapon = (currentWeapon + 1) % 2;
-    }
-
-    public void manualReload() {
-        int w = currentWeapon;
-        if (!reloadingPerWeapon[w] && ammoPerWeapon[w] < WEAPON_MAG_SIZE[w]) {
-            startReload(w);
+    private void spawnBots(int count) {
+        for (int i = 0; i < count; i++) {
+            float[] p = offCenterSpawn(brInitR * 0.7f);
+            Bot b = new Bot(p[0], p[1], BOT_HP);
+            if (!battleRoyaleMode) { b.yaw = rnd.nextFloat()*(float)(Math.PI*2); }
+            bots.add(b);
         }
     }
 
-    public String getWeaponName() {
-        return WEAPON_NAMES[currentWeapon];
-    }
-
-    public int getCurrentAmmo() {
-        return ammoPerWeapon[currentWeapon];
-    }
-
-    public int getMagSize() {
-        return WEAPON_MAG_SIZE[currentWeapon];
-    }
-
-    public boolean isReloading() {
-        return reloadingPerWeapon[currentWeapon];
-    }
-
-    public boolean isRecentHit() {
-        return SystemClock.uptimeMillis() - lastHitUptimeMs < HIT_FLASH_MS;
-    }
-
-    public boolean isDemolitionMode() {
-        return demolitionMode;
-    }
-
-    public int getTargetsRemaining() {
-        return targetsRemaining;
-    }
-
-    public long getTimeRemainingMs() {
-        if (!demolitionMode) return 0;
-        long elapsed = SystemClock.uptimeMillis() - demolitionStartUptimeMs;
-        return Math.max(0, DEMOLITION_DURATION_MS - elapsed);
-    }
-
-    public boolean isGameWon() {
-        return gameWon;
-    }
-
-    public boolean isGameLost() {
-        return gameLost;
-    }
-
-    public long getCompletionTimeMs() {
-        return completionTimeMs;
-    }
-
-    public boolean isBattleRoyaleMode() {
-        return battleRoyaleMode;
-    }
-
-    public boolean isFfaMode() {
-        return ffaMode;
-    }
-
-    public float getPlayerHealthPercent() {
-        return Math.max(0f, playerHealth / PLAYER_MAX_HEALTH);
-    }
-
-    public boolean isPlayerEliminated() {
-        return playerEliminated;
-    }
-
-    public boolean isBrSurvived() {
-        return brSurvived;
-    }
-
-    public boolean isFfaTimeUp() {
-        return ffaTimeUp;
-    }
-
-    public boolean isFfaAllEliminated() {
-        return ffaAllEliminated;
-    }
-
-    public long getSurvivalMs() {
-        return survivalMs;
-    }
-
-    public int getKillCount() {
-        return killCount;
-    }
-
-    public int getBotsRemaining() {
-        int n = 0;
-        for (Bot b : bots) if (b.alive) n++;
-        return n;
-    }
-
-    public long getModeTimeRemainingMs() {
-        long total = battleRoyaleMode ? BR_DURATION_MS : (ffaMode ? FFA_DURATION_MS : 0);
-        if (total == 0) return 0;
-        long elapsed = SystemClock.uptimeMillis() - modeStartUptimeMs;
-        return Math.max(0, total - elapsed);
-    }
-
-    public boolean isInDangerZone() {
-        if (!battleRoyaleMode) return false;
-        float dist = (float) Math.sqrt(playerX * playerX + playerZ * playerZ);
-        return dist > currentZoneRadius;
-    }
-
-    /** Call via glSurfaceView.queueEvent(). */
-    public void tryShoot() {
-        int w = currentWeapon;
-        if (reloadingPerWeapon[w]) return;
-        if (ammoPerWeapon[w] <= 0) {
-            startReload(w);
-            return;
+    private float[][][] buildBiome() {
+        float[][][] c = new float[gridSize*2][gridSize*2][];
+        float[] base = BASE_COLORS[mapIdx];
+        int S = 12;
+        float[] sx = new float[S], sz2 = new float[S];
+        float[][] st = new float[S][];
+        float ext = gridSize * 2f;
+        for (int i=0;i<S;i++){sx[i]=(rnd.nextFloat()*2-1)*ext;sz2[i]=(rnd.nextFloat()*2-1)*ext;st[i]=BIOME_TINTS[rnd.nextInt(BIOME_TINTS.length)];}
+        for (int x=-gridSize;x<gridSize;x++) for (int z=-gridSize;z<gridSize;z++){
+            float wx=x*2f, wz=z*2f, best=Float.MAX_VALUE; int near=0;
+            for (int i=0;i<S;i++){float d=(wx-sx[i])*(wx-sx[i])+(wz-sz2[i])*(wz-sz2[i]);if(d<best){best=d;near=i;}}
+            float dist=(float)Math.sqrt(best);
+            float[] t=st[near];
+            float[] col=dist>14f?base:new float[]{base[0]*.5f+t[0]*.5f,base[1]*.5f+t[1]*.5f,base[2]*.5f+t[2]*.5f,1f};
+            c[x+gridSize][z+gridSize]=col;
         }
+        return c;
+    }
 
-        ammoPerWeapon[w]--;
-        lastFireUptimeMs = SystemClock.uptimeMillis();
-        if (ammoPerWeapon[w] == 0) {
-            startReload(w);
+    // ─── Public API ────────────────────────────────────────────────────────────
+    public void setMoveInput(float dx, float dy){ moveDx=dx; moveDz=dy; }
+
+    public void addLookDelta(float dx, float dy){
+        float s = LOOK_SENS * sensitivity;
+        yaw   += dx * s;
+        pitch -= dy * s;
+        if (pitch > PITCH_MAX) pitch = PITCH_MAX;
+        if (pitch < -PITCH_MAX) pitch = -PITCH_MAX;
+    }
+
+    public void toggleViewMode(){ tpp=!tpp; }
+
+    public void onThrustPress(){
+        thrustHeld=true;
+        if (grounded && fuel > MIN_FUEL_HOP){ velY=HOP_VEL; grounded=false; }
+    }
+    public void onThrustRelease(){ thrustHeld=false; }
+    public float getFuelPercent(){ return fuel/FUEL_MAX; }
+
+    public void switchWeapon(){
+        if (battleRoyaleMode){ int t=currentWeapon; currentWeapon=secondWeapon; secondWeapon=t; }
+        else { currentWeapon=(currentWeapon+1) % NUM_WEAPONS; }
+    }
+
+    public void manualReload(){
+        int w=currentWeapon; if (w<0) return;
+        if (!reloading[w] && ammo[w]<MAG[w]) startReload(w);
+    }
+
+    public String getWeaponName(){ return currentWeapon<0?"UNARMED":WPN_NAME[currentWeapon]; }
+    public String getSecondWeaponName(){ return secondWeapon<0?"":WPN_NAME[secondWeapon]; }
+    public int getCurrentAmmo(){ return currentWeapon<0?0:ammo[currentWeapon]; }
+    public int getMagSize(){ return currentWeapon<0?0:MAG[currentWeapon]; }
+    public boolean isReloading(){ return currentWeapon>=0 && reloading[currentWeapon]; }
+    public boolean isRecentHit(){ return SystemClock.uptimeMillis()-lastHitMs<HIT_FLASH; }
+    public float getPlayerHealthPercent(){ return Math.max(0,playerHealth/PLAYER_HP); }
+    public boolean isPlayerEliminated(){ return playerEliminated; }
+
+    public boolean isDemolitionMode(){ return demolitionMode; }
+    public int getTargetsRemaining(){ return targetsLeft; }
+    public long getDemoTimeMs(){ long e=SystemClock.uptimeMillis()-demoStart; return Math.max(0,DEMO_MS-e); }
+    public boolean isGameWon(){ return gameWon; }
+    public boolean isGameLost(){ return gameLost; }
+    public long getCompletionMs(){ return wonMs; }
+
+    public boolean isBattleRoyaleMode(){ return battleRoyaleMode; }
+    public boolean isFfaMode(){ return ffaMode; }
+    public int getKills(){ return kills; }
+    public int getBotsRemaining(){ int n=0; for (Bot b:bots) if(b.alive) n++; return n; }
+    public boolean isBrSurvived(){ return brSurvived; }
+    public boolean isFfaTimeUp(){ return ffaTimeUp; }
+    public boolean isFfaAllDown(){ return ffaAllDown; }
+    public long getSurvivalMs(){ return survivalMs; }
+    public boolean isInDangerZone(){ if(!battleRoyaleMode) return false; float d=(float)Math.sqrt(playerX*playerX+playerZ*playerZ); return d>brZoneR; }
+    public long getModeTimeLeftMs(){ if(!ffaMode&&!battleRoyaleMode) return 0; long dur=battleRoyaleMode?BR_MS:FFA_MS; return Math.max(0,dur-(SystemClock.uptimeMillis()-modeStart)); }
+
+    public String getPickupMessage(){
+        return SystemClock.uptimeMillis()-lastPickupMs<2500 ? pickupMsg : "";
+    }
+    public String getNearbyLootName(){
+        if (!battleRoyaleMode) return null;
+        for (LootItem item:loot){
+            if (item.collected) continue;
+            float dx=playerX-item.x, dz=playerZ-item.z;
+            if (dx*dx+dz*dz < PICKUP_R*PICKUP_R) return WPN_NAME[item.weaponType];
         }
+        return null;
+    }
 
-        float cosPitch = (float) Math.cos(pitch);
-        float dirX = (float) Math.sin(yaw) * cosPitch;
-        float dirY = (float) Math.sin(pitch);
-        float dirZ = (float) -Math.cos(yaw) * cosPitch;
+    public void tryShoot(){
+        if (currentWeapon<0) return;
+        int w=currentWeapon;
+        if (reloading[w]) return;
+        if (ammo[w]<=0){ startReload(w); return; }
+        long now=SystemClock.uptimeMillis();
+        if (now-lastFireMs<FIRE_DELAY[w]) return;
+        lastFireMs=now;
+        ammo[w]--;
+        if (ammo[w]==0) startReload(w);
 
-        float originX = playerX;
-        float originY = EYE_HEIGHT + playerY;
-        float originZ = playerZ;
+        float cpitch=(float)Math.cos(pitch);
+        float dx=(float)Math.sin(yaw)*cpitch, dy=(float)Math.sin(pitch), dz=(float)-Math.cos(yaw)*cpitch;
+        float ox=playerX, oy=EYE_H+playerY, oz=playerZ;
 
-        for (float t = 0.5f; t < SHOOT_MAX_DIST; t += SHOOT_STEP) {
-            float px = originX + dirX * t;
-            float py = originY + dirY * t;
-            float pz = originZ + dirZ * t;
-
-            if (botsPresent) {
-                for (Bot bot : bots) {
-                    if (!bot.alive) continue;
-                    float bdx = px - bot.x;
-                    float bdz = pz - bot.z;
-                    float bdist = (float) Math.sqrt(bdx * bdx + bdz * bdz);
-                    if (bdist < BOT_HIT_RADIUS && py > 0f && py < BOT_HEIGHT) {
-                        bot.alive = false;
-                        killCount++;
-                        lastHitUptimeMs = SystemClock.uptimeMillis();
-                        return;
-                    }
+        for (float t=0.5f;t<SHOOT_MAX;t+=SHOOT_STEP){
+            float px=ox+dx*t, py=oy+dy*t, pz=oz+dz*t;
+            if (botsPresent){ for (Bot b:bots){ if(!b.alive) continue;
+                float bdx=px-b.x, bdz=pz-b.z;
+                if ((float)Math.sqrt(bdx*bdx+bdz*bdz)<BOT_HIT_R && py>GROUND_Y && py<GROUND_Y+2.5f){
+                    b.alive=false; kills++; lastHitMs=now; return;
                 }
-            }
-
-            if (py < 0f || py > 2f * VoxelCube.SIZE) continue;
-
-            int gx = Math.round(px / 2f);
-            int gz = Math.round(pz / 2f);
-            if (gx < -gridSize || gx >= gridSize || gz < -gridSize || gz >= gridSize) continue;
-
-            int ix = gx + gridSize;
-            int iz = gz + gridSize;
-            if (!blockExists[ix][iz]) continue;
-
-            float localX = px - gx * 2f;
-            float localZ = pz - gz * 2f;
-            if (Math.abs(localX) < VoxelCube.SIZE && Math.abs(localZ) < VoxelCube.SIZE) {
-                blockExists[ix][iz] = false;
-                lastHitUptimeMs = SystemClock.uptimeMillis();
-
-                if (demolitionMode && !gameWon && !gameLost
-                        && targetBlocks != null && targetBlocks[ix][iz]) {
-                    targetBlocks[ix][iz] = false;
-                    targetsRemaining--;
-                    if (targetsRemaining <= 0) {
-                        gameWon = true;
-                        completionTimeMs = SystemClock.uptimeMillis() - demolitionStartUptimeMs;
-                    }
+            }}
+            if (py<GROUND_Y || py>GROUND_Y+2f*VoxelCube.SIZE) continue;
+            int gx=Math.round(px/2f), gz=Math.round(pz/2f);
+            if (gx<-gridSize||gx>=gridSize||gz<-gridSize||gz>=gridSize) continue;
+            int ix=gx+gridSize, iz=gz+gridSize;
+            if (!blocks[ix][iz]) continue;
+            float lx=px-gx*2f, lz=pz-gz*2f;
+            if (Math.abs(lx)<VoxelCube.SIZE && Math.abs(lz)<VoxelCube.SIZE){
+                blocks[ix][iz]=false; lastHitMs=now;
+                if (demolitionMode&&!gameWon&&!gameLost&&targets!=null&&targets[ix][iz]){
+                    targets[ix][iz]=false; targetsLeft--;
+                    if (targetsLeft<=0){gameWon=true;wonMs=now-demoStart;}
                 }
                 return;
             }
         }
     }
 
-    private void startReload(int w) {
-        reloadingPerWeapon[w] = true;
-        new Handler(Looper.getMainLooper()).postDelayed(() -> {
-            ammoPerWeapon[w] = WEAPON_MAG_SIZE[w];
-            reloadingPerWeapon[w] = false;
-        }, WEAPON_RELOAD_MS[w]);
+    private void startReload(int w){
+        reloading[w]=true;
+        new Handler(Looper.getMainLooper()).postDelayed(()->{ ammo[w]=MAG[w]; reloading[w]=false; }, RELOAD_MS[w]);
     }
 
-    @Override
-    public void onSurfaceCreated(GL10 gl, EGLConfig config) {
-        float[] sky = MAP_SKY_COLORS[mapIndex];
-        GLES20.glClearColor(sky[0], sky[1], sky[2], sky[3]);
+    // ─── GL Lifecycle ─────────────────────────────────────────────────────────
+    @Override public void onSurfaceCreated(GL10 gl, EGLConfig cfg){
+        float[] sky=SKY_COLORS[mapIdx];
+        GLES20.glClearColor(sky[0],sky[1],sky[2],sky[3]);
         GLES20.glEnable(GLES20.GL_DEPTH_TEST);
-
-        int vertexShader = compileShader(GLES20.GL_VERTEX_SHADER, VERTEX_SHADER);
-        int fragmentShader = compileShader(GLES20.GL_FRAGMENT_SHADER, FRAGMENT_SHADER);
-
-        program = GLES20.glCreateProgram();
-        GLES20.glAttachShader(program, vertexShader);
-        GLES20.glAttachShader(program, fragmentShader);
-        GLES20.glLinkProgram(program);
-
-        cube = new VoxelCube();
-        sphere = new VoxelSphere();
+        int vs=shader(GLES20.GL_VERTEX_SHADER,VERT), fs=shader(GLES20.GL_FRAGMENT_SHADER,FRAG);
+        program=GLES20.glCreateProgram();
+        GLES20.glAttachShader(program,vs); GLES20.glAttachShader(program,fs); GLES20.glLinkProgram(program);
+        cube=new VoxelCube();
     }
 
-    @Override
-    public void onSurfaceChanged(GL10 gl, int width, int height) {
-        GLES20.glViewport(0, 0, width, height);
-        float aspect = (float) width / height;
-        Matrix.perspectiveM(projectionMatrix, 0, FOV_DEGREES, aspect, 0.5f, 260f);
+    @Override public void onSurfaceChanged(GL10 gl, int w, int h){
+        GLES20.glViewport(0,0,w,h);
+        float a=(float)w/h;
+        Matrix.perspectiveM(proj,       0, FOV, a, 0.50f, 260f);
+        Matrix.perspectiveM(viewModProj, 0, FOV, a, 0.05f, 10f);
     }
 
-    @Override
-    public void onDrawFrame(GL10 gl) {
-        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT | GLES20.GL_DEPTH_BUFFER_BIT);
+    @Override public void onDrawFrame(GL10 gl){
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT|GLES20.GL_DEPTH_BUFFER_BIT);
+        animTime++;
 
-        animTime += 1f;
+        // ── Mode timers ──
+        if (demolitionMode&&!gameWon&&!gameLost&&getDemoTimeMs()<=0) gameLost=true;
 
-        if (demolitionMode && !gameWon && !gameLost && getTimeRemainingMs() <= 0) {
-            gameLost = true;
+        // ── Jetpack / gravity ──
+        boolean thrusting=thrustHeld&&fuel>0f;
+        if (thrusting){ velY+=JET_ACCEL; fuel=Math.max(0,fuel-FUEL_DRAIN); }
+        else           { fuel=Math.min(FUEL_MAX,fuel+FUEL_REGEN); }
+        velY+=GRAVITY;
+        velY=Math.max(MAX_FALL,Math.min(MAX_RISE,velY));
+        playerY+=velY;
+        if (playerY<=GROUND_Y){ playerY=GROUND_Y; velY=0; grounded=true; } else { grounded=false; }
+
+        // ── Movement ──
+        float yN=yaw, pN=pitch;
+        float fwdX=(float)Math.sin(yN), fwdZ=(float)-Math.cos(yN);
+        float rtX=(float)Math.cos(yN), rtZ=(float)Math.sin(yN);
+        float fa=-moveDz, sa=moveDx;
+        float mag=(float)Math.min(1,Math.sqrt(fa*fa+sa*sa));
+        playerX+=(fwdX*fa+rtX*sa)*MOVE_SPEED;
+        playerZ+=(fwdZ*fa+rtZ*sa)*MOVE_SPEED;
+
+        // ── Battle Royale zone ──
+        if (battleRoyaleMode&&!playerEliminated&&!brSurvived){
+            long el=SystemClock.uptimeMillis()-modeStart;
+            float t2=Math.min(1f,el/(float)BR_MS);
+            brZoneR=brInitR+(BR_FINAL_R-brInitR)*t2;
+            if (el>=BR_MS){ brSurvived=true; }
+            else if (isInDangerZone()){ damagePlayer(BR_DMG_PS/60f, el); }
         }
+        // ── FFA ──
+        if (ffaMode&&!playerEliminated){
+            long el=SystemClock.uptimeMillis()-modeStart;
+            if (el>=FFA_MS) ffaTimeUp=true;
+            if (getBotsRemaining()==0) ffaAllDown=true;
+        }
+        // ── Bots ──
+        if (botsPresent) updateBots();
+        // ── Loot ──
+        if (battleRoyaleMode) checkLoot();
 
-        boolean thrusting = thrustHeld && fuel > 0f;
-        if (thrusting) {
-            verticalVelocity += JETPACK_ACCEL;
-            fuel = Math.max(0f, fuel - FUEL_DRAIN_PER_FRAME);
+        // ── Camera ──
+        float cp=(float)Math.cos(pN);
+        float ldX=(float)Math.sin(yN)*cp, ldY=(float)Math.sin(pN), ldZ=(float)-Math.cos(yN)*cp;
+        if (tpp){
+            float pivX=playerX, pivY=playerY+TPP_PIVOT_H, pivZ=playerZ;
+            Matrix.setLookAtM(view,0, pivX-ldX*TPP_DIST, pivY-ldY*TPP_DIST+TPP_VOFF, pivZ-ldZ*TPP_DIST,
+                              pivX,pivY,pivZ, 0,1,0);
         } else {
-            fuel = Math.min(FUEL_MAX, fuel + FUEL_REGEN_PER_FRAME);
+            Matrix.setLookAtM(view,0, playerX,EYE_H+playerY,playerZ,
+                              playerX+ldX,EYE_H+playerY+ldY,playerZ+ldZ, 0,1,0);
         }
-        verticalVelocity += GRAVITY;
-        if (verticalVelocity > MAX_RISE_VELOCITY) verticalVelocity = MAX_RISE_VELOCITY;
-        if (verticalVelocity < MAX_FALL_VELOCITY) verticalVelocity = MAX_FALL_VELOCITY;
-        playerY += verticalVelocity;
-        if (playerY <= 0f) {
-            playerY = 0f;
-            verticalVelocity = 0f;
-            grounded = true;
-        } else {
-            grounded = false;
-        }
-
-        float yawNow = yaw;
-        float pitchNow = pitch;
-
-        float moveForwardX = (float) Math.sin(yawNow);
-        float moveForwardZ = (float) -Math.cos(yawNow);
-        float moveRightX = (float) Math.cos(yawNow);
-        float moveRightZ = (float) Math.sin(yawNow);
-
-        float forwardAmount = -moveDz;
-        float strafeAmount = moveDx;
-        float moveMagnitude = Math.min(1f, (float) Math.sqrt(
-                forwardAmount * forwardAmount + strafeAmount * strafeAmount));
-
-        playerX += (moveForwardX * forwardAmount + moveRightX * strafeAmount) * MOVE_SPEED;
-        playerZ += (moveForwardZ * forwardAmount + moveRightZ * strafeAmount) * MOVE_SPEED;
-
-        if (battleRoyaleMode && !playerEliminated && !brSurvived) {
-            long elapsed = SystemClock.uptimeMillis() - modeStartUptimeMs;
-            float t = Math.min(1f, elapsed / (float) BR_DURATION_MS);
-            currentZoneRadius = brInitialRadius + (BR_FINAL_RADIUS - brInitialRadius) * t;
-
-            if (elapsed >= BR_DURATION_MS) {
-                brSurvived = true;
-            } else if (isInDangerZone()) {
-                damagePlayer(BR_ZONE_DAMAGE_PER_SEC / 60f, elapsed);
-            }
-        }
-
-        if (ffaMode && !playerEliminated && !ffaTimeUp && !ffaAllEliminated) {
-            long elapsed = SystemClock.uptimeMillis() - modeStartUptimeMs;
-            if (elapsed >= FFA_DURATION_MS) {
-                ffaTimeUp = true;
-            } else if (getBotsRemaining() == 0) {
-                ffaAllEliminated = true;
-            }
-        }
-
-        if (botsPresent) {
-            updateBots();
-        }
-
-        float cosPitch = (float) Math.cos(pitchNow);
-        float lookDirX = (float) Math.sin(yawNow) * cosPitch;
-        float lookDirY = (float) Math.sin(pitchNow);
-        float lookDirZ = (float) -Math.cos(yawNow) * cosPitch;
-
-        boolean tpp = thirdPerson;
-
-        if (tpp) {
-            float pivotX = playerX;
-            float pivotY = playerY + TPP_PIVOT_HEIGHT;
-            float pivotZ = playerZ;
-
-            float eyeX = pivotX - lookDirX * TPP_DISTANCE;
-            float eyeY = pivotY - lookDirY * TPP_DISTANCE + TPP_VERTICAL_OFFSET;
-            float eyeZ = pivotZ - lookDirZ * TPP_DISTANCE;
-
-            Matrix.setLookAtM(viewMatrix, 0, eyeX, eyeY, eyeZ, pivotX, pivotY, pivotZ, 0f, 1f, 0f);
-        } else {
-            float eyeX = playerX;
-            float eyeY = EYE_HEIGHT + playerY;
-            float eyeZ = playerZ;
-
-            Matrix.setLookAtM(viewMatrix, 0,
-                    eyeX, eyeY, eyeZ,
-                    eyeX + lookDirX, eyeY + lookDirY, eyeZ + lookDirZ,
-                    0f, 1f, 0f);
-        }
-
-        Matrix.multiplyMM(vpMatrix, 0, projectionMatrix, 0, viewMatrix, 0);
-
+        Matrix.multiplyMM(vp,0,proj,0,view,0);
         GLES20.glUseProgram(program);
 
-        float[] uniformGroundColor = MAP_GROUND_COLORS[mapIndex];
+        // ── Ground blocks ──
+        float[] baseCol=BASE_COLORS[mapIdx];
+        for (int x=-gridSize;x<gridSize;x++) for (int z=-gridSize;z<gridSize;z++){
+            int ix=x+gridSize, iz=z+gridSize;
+            if (!blocks[ix][iz]) continue;
+            Matrix.setIdentityM(mdl,0);
+            Matrix.translateM(mdl,0,x*2f,0f,z*2f);
+            Matrix.multiplyMM(mvp,0,vp,0,mdl,0);
+            float[] col=cellColor!=null?cellColor[ix][iz]:baseCol;
+            if (demolitionMode&&targets!=null&&targets[ix][iz]) col=C_TARGET;
+            if (battleRoyaleMode){float wx=x*2f,wz=z*2f; if((float)Math.sqrt(wx*wx+wz*wz)>brZoneR) col=C_ZONE;}
+            cube.draw(program,mvp,col);
+        }
 
-        for (int x = -gridSize; x < gridSize; x++) {
-            for (int z = -gridSize; z < gridSize; z++) {
-                int ix = x + gridSize;
-                int iz = z + gridSize;
-                if (!blockExists[ix][iz]) continue;
+        // ── Ruins layer 2 (walls / debris) ──
+        if (layer2!=null) for (int x=-gridSize;x<gridSize;x++) for (int z=-gridSize;z<gridSize;z++){
+            int ix=x+gridSize,iz=z+gridSize;
+            if (!layer2[ix][iz]) continue;
+            Matrix.setIdentityM(mdl,0);
+            Matrix.translateM(mdl,0,x*2f,1.8f,z*2f);
+            Matrix.multiplyMM(mvp,0,vp,0,mdl,0);
+            cube.draw(program,mvp,C_RUIN2);
+        }
 
-                Matrix.setIdentityM(modelMatrix, 0);
-                Matrix.translateM(modelMatrix, 0, x * 2f, 0f, z * 2f);
-                Matrix.multiplyMM(mvpMatrix, 0, vpMatrix, 0, modelMatrix, 0);
-
-                float[] color = cellBaseColor != null ? cellBaseColor[ix][iz] : uniformGroundColor;
-                if (demolitionMode && targetBlocks != null && targetBlocks[ix][iz]) {
-                    color = TARGET_COLOR;
-                } else if (battleRoyaleMode) {
-                    float wx = x * 2f, wz = z * 2f;
-                    float dist = (float) Math.sqrt(wx * wx + wz * wz);
-                    if (dist > currentZoneRadius) color = ZONE_DANGER_COLOR;
-                }
-                cube.draw(program, mvpMatrix, color);
+        // ── Loot cubes ──
+        if (battleRoyaleMode){
+            for (LootItem item:loot){
+                if (item.collected) continue;
+                float bob=0.15f+(float)Math.sin(animTime*0.06f)*0.05f;
+                Matrix.setIdentityM(mdl,0);
+                Matrix.translateM(mdl,0,item.x,GROUND_Y+bob,item.z);
+                Matrix.scaleM(mdl,0,0.22f,0.22f,0.22f);
+                Matrix.rotateM(mdl,0,animTime*1.5f,0,1,0);
+                Matrix.multiplyMM(mvp,0,vp,0,mdl,0);
+                cube.draw(program,mvp,C_LOOT);
             }
         }
 
-        if (botsPresent) {
-            for (Bot bot : bots) {
-                if (!bot.alive) continue;
-                drawCharacterModel(bot.x, 0f, bot.z, bot.yaw, bot.walkPhase, ENEMY_SHIRT_COLOR, false);
+        // ── Bots ──
+        if (botsPresent){
+            for (Bot b:bots){
+                if (!b.alive) continue;
+                drawCharacter(b.x, GROUND_Y, b.z, b.yaw, b.walkPhase, C_ENEMY, false);
             }
         }
 
-        if (tpp) {
-            drawCharacterModel(playerX, playerY, playerZ, yawNow, walkCyclePhase, SHIRT_COLOR, true);
-            walkCyclePhase += moveMagnitude * WALK_CYCLE_RATE * (moveMagnitude > 0.05f ? 1f : 0f);
+        // ── Player (TPP) ──
+        if (tpp){
+            drawCharacter(playerX,playerY,playerZ,yN,walkPhase,C_TACT,true);
+            if (mag>0.05f) walkPhase+=mag*WALK_RATE;
         } else {
             GLES20.glClear(GLES20.GL_DEPTH_BUFFER_BIT);
             drawViewmodel();
         }
     }
 
-    private void damagePlayer(float amount, long elapsedForSurvivalStat) {
-        playerHealth -= amount;
-        if (playerHealth <= 0f) {
-            playerHealth = 0f;
-            playerEliminated = true;
-            survivalMs = elapsedForSurvivalStat;
+    // ─── Damage ────────────────────────────────────────────────────────────────
+    private void damagePlayer(float amount, long el){
+        playerHealth-=amount;
+        if (playerHealth<=0){playerHealth=0;playerEliminated=true;survivalMs=el;}
+    }
+
+    // ─── Loot pickup ──────────────────────────────────────────────────────────
+    private void checkLoot(){
+        for (LootItem item:loot){
+            if (item.collected) continue;
+            float dx=playerX-item.x, dz=playerZ-item.z;
+            if (dx*dx+dz*dz < PICKUP_R*PICKUP_R){
+                if (currentWeapon==WEAPON_NONE){
+                    currentWeapon=item.weaponType;
+                    ammo[item.weaponType]=MAG[item.weaponType];
+                    item.collected=true;
+                    pickupMsg="PICKED UP: "+WPN_NAME[item.weaponType];
+                    lastPickupMs=SystemClock.uptimeMillis();
+                } else if (secondWeapon==WEAPON_NONE){
+                    secondWeapon=item.weaponType;
+                    ammo[item.weaponType]=MAG[item.weaponType];
+                    item.collected=true;
+                    pickupMsg="PICKED UP: "+WPN_NAME[item.weaponType]+" (SLOT 2)";
+                    lastPickupMs=SystemClock.uptimeMillis();
+                }
+            }
         }
     }
 
-    private float distFromCenter(float x, float z) {
-        return (float) Math.sqrt(x * x + z * z);
-    }
-
-    private void updateBots() {
-        long now = SystemClock.uptimeMillis();
-        long elapsed = now - modeStartUptimeMs;
-
-        for (Bot bot : bots) {
-            if (!bot.alive) continue;
-
-            boolean inDanger = battleRoyaleMode && distFromCenter(bot.x, bot.z) > currentZoneRadius;
-            float dx = playerX - bot.x;
-            float dz = playerZ - bot.z;
-            float distToPlayer = (float) Math.sqrt(dx * dx + dz * dz);
-
-            float moveX = 0f, moveZ = 0f;
-            boolean moving = false;
-
-            if (inDanger) {
-                float len = distFromCenter(bot.x, bot.z);
-                if (len > 0.01f) {
-                    moveX = -bot.x / len;
-                    moveZ = -bot.z / len;
-                    moving = true;
-                }
-                bot.health -= BR_ZONE_DAMAGE_PER_SEC / 60f;
-                if (bot.health <= 0f) {
-                    bot.alive = false;
-                    continue;
-                }
-            } else if (!playerEliminated && distToPlayer < BOT_DETECT_RANGE) {
-                if (distToPlayer > 0.01f) {
-                    moveX = dx / distToPlayer;
-                    moveZ = dz / distToPlayer;
-                    moving = true;
-                }
-                if (distToPlayer < BOT_ENGAGE_RANGE && now - bot.lastShotUptimeMs > BOT_SHOT_INTERVAL_MS) {
-                    bot.lastShotUptimeMs = now;
-                    if (random.nextFloat() < BOT_HIT_CHANCE) {
-                        damagePlayer(BOT_DAMAGE, elapsed);
-                    }
+    // ─── Bot AI ────────────────────────────────────────────────────────────────
+    private void updateBots(){
+        long now=SystemClock.uptimeMillis();
+        long el=now-modeStart;
+        for (Bot b:bots){
+            if (!b.alive) continue;
+            boolean danger=battleRoyaleMode&&(float)Math.sqrt(b.x*b.x+b.z*b.z)>brZoneR;
+            if (danger){ b.health-=BR_DMG_PS/60f; if(b.health<=0){b.alive=false;continue;} }
+            float dx=playerX-b.x, dz=playerZ-b.z;
+            float dist=(float)Math.sqrt(dx*dx+dz*dz);
+            float mx=0,mz=0; boolean moving=false;
+            if (danger){ float len=(float)Math.sqrt(b.x*b.x+b.z*b.z); if(len>.01f){mx=-b.x/len;mz=-b.z/len;moving=true;} }
+            else if (!playerEliminated&&dist<BOT_DETECT){
+                if(dist>.01f){mx=dx/dist;mz=dz/dist;moving=true;}
+                if(dist<BOT_ENGAGE&&now-b.lastShotUptimeMs>BOT_SHOT_MS){
+                    b.lastShotUptimeMs=now;
+                    if(rnd.nextFloat()<BOT_MISS) damagePlayer(BOT_DMG,el);
                 }
             } else {
-                float wdx = bot.wanderTargetX - bot.x;
-                float wdz = bot.wanderTargetZ - bot.z;
-                float wlen = (float) Math.sqrt(wdx * wdx + wdz * wdz);
-                if (wlen < 1f) {
-                    bot.wanderTargetX = bot.x + (random.nextFloat() - 0.5f) * BOT_WANDER_RADIUS * 2f;
-                    bot.wanderTargetZ = bot.z + (random.nextFloat() - 0.5f) * BOT_WANDER_RADIUS * 2f;
-                } else {
-                    moveX = wdx / wlen;
-                    moveZ = wdz / wlen;
-                    moving = true;
+                float wdx=b.wanderTargetX-b.x, wdz=b.wanderTargetZ-b.z;
+                float wl=(float)Math.sqrt(wdx*wdx+wdz*wdz);
+                if(wl<1f){b.wanderTargetX=b.x+(rnd.nextFloat()-.5f)*BOT_WANDER*2;b.wanderTargetZ=b.z+(rnd.nextFloat()-.5f)*BOT_WANDER*2;}
+                else{mx=wdx/wl;mz=wdz/wl;moving=true;}
+            }
+            b.x+=mx*BOT_SPEED; b.z+=mz*BOT_SPEED;
+            if(moving){b.yaw=(float)Math.atan2(mx,-mz);b.walkPhase+=WALK_RATE;}
+        }
+    }
+
+    // ─── Character drawing ────────────────────────────────────────────────────
+    private void drawCharacter(float x, float y, float z, float yawR, float wPhase, float[] shirt, boolean isPlayer){
+        float bob=(float)Math.sin(animTime*IDLE_BOB_R)*IDLE_BOB_A;
+        Matrix.setIdentityM(charMat,0);
+        Matrix.translateM(charMat,0,x,y+bob,z);
+        Matrix.rotateM(charMat,0,(float)Math.toDegrees(yawR),0,1,0);
+
+        float sw=(float)Math.sin(wPhase);
+        float lg=sw*MAX_LEG_SWING, ag=sw*MAX_ARM_SWING;
+
+        // Boots (grey, swing with legs from hip — boot bottom at charY=0 = world GROUND_Y ✓)
+        swingBox(-LEG_OX, HIP_Y, 0, lg,  LEG_LEN, BOOT_SX, BOOT_SY, BOOT_SX, C_BOOT);
+        swingBox( LEG_OX, HIP_Y, 0,-lg,  LEG_LEN, BOOT_SX, BOOT_SY, BOOT_SX, C_BOOT);
+        // Legs
+        swingPart(-LEG_OX, HIP_Y, 0, lg,  LEG_SX, LEG_SY, LEG_SX, shirt);
+        swingPart( LEG_OX, HIP_Y, 0,-lg,  LEG_SX, LEG_SY, LEG_SX, shirt);
+        // Torso
+        part(0, HIP_Y, 0, TORSO_SX, TORSO_SY, TORSO_SZ, shirt);
+        // Arms
+        swingPart(-ARM_OX, SHOULDER_Y, 0, ag, ARM_SX, ARM_SY, ARM_SX, shirt);
+        swingPart( ARM_OX, SHOULDER_Y, 0,-ag, ARM_SX, ARM_SY, ARM_SX, shirt);
+        // Fists (cube hands — geometric, no sphere)
+        swingBox(-ARM_OX, SHOULDER_Y, 0, ag,  ARM_LEN, FIST_SX, FIST_SY, FIST_SX, C_SKIN);
+        swingBox( ARM_OX, SHOULDER_Y, 0,-ag,  ARM_LEN, FIST_SX, FIST_SY, FIST_SX, C_SKIN);
+        // Head (block cube — not sphere)
+        part(0, HEAD_Y, 0, HEAD_SX, HEAD_SY, HEAD_SX, C_SKIN);
+        // Hair (spiky)
+        float hy=HAIR_Y;
+        part(0,     hy,     -0.05f, 0.10f, 0.14f, 0.08f, C_HAIR);
+        part(-0.14f,hy+0.02f, 0f,   0.08f, 0.11f, 0.07f, C_HAIR);
+        part( 0.14f,hy+0.01f, 0.02f,0.08f, 0.12f, 0.07f, C_HAIR);
+        part( 0.05f,hy+0.04f,-0.11f,0.07f, 0.10f, 0.06f, C_HAIR);
+        part(-0.07f,hy+0.03f,-0.04f,0.07f, 0.09f, 0.06f, C_HAIR);
+        part(0, HEAD_Y+HEAD_SY*1.8f-0.04f, 0, 0.27f, 0.028f, 0.27f, C_HAIR); // hair base mat
+
+        // Weapon in right hand
+        int wdraw = isPlayer ? currentWeapon : WEAPON_AK47;
+        if (wdraw >= 0) drawHeldWeapon(-ag, wdraw);
+
+        // Jetpack flames from boots
+        if (isPlayer && thrustHeld && fuel>0) drawBoostFlames(lg);
+    }
+
+    private void drawBoostFlames(float legSwing){
+        float flk=0.55f+0.45f*(float)Math.abs(Math.sin(animTime*1.4f));
+        float fh=0.26f*flk, fsy=fh/1.8f;
+        float[] b1={1f,0.70f*flk,0.15f,1f}, b2={1f,0.35f,0.08f,1f};
+        // Swing with boots (same pivot/angle as legs)
+        swingBox(-LEG_OX, HIP_Y, 0, legSwing,  LEG_LEN+BOOT_SY*1.8f, 0.10f, fsy, 0.10f, b1);
+        swingBox( LEG_OX, HIP_Y, 0,-legSwing,  LEG_LEN+BOOT_SY*1.8f, 0.10f, fsy, 0.10f, b1);
+        swingBox(-LEG_OX, HIP_Y, 0, legSwing,  LEG_LEN+BOOT_SY*1.8f, 0.05f, fsy*0.65f, 0.05f, b2);
+        swingBox( LEG_OX, HIP_Y, 0,-legSwing,  LEG_LEN+BOOT_SY*1.8f, 0.05f, fsy*0.65f, 0.05f, b2);
+    }
+
+    // ─── Weapon viewmodel (FPP) ────────────────────────────────────────────────
+    private void drawViewmodel(){
+        if (currentWeapon < 0) return;
+        long sf=SystemClock.uptimeMillis()-lastFireMs;
+        float rT=sf<RECOIL_MS?1f-(sf/(float)RECOIL_MS):0f;
+        float bobX=(float)Math.sin(animTime*IDLE_BOB_R*0.6f)*0.010f;
+        float bobY=(float)Math.cos(animTime*IDLE_BOB_R*0.6f)*0.008f;
+        Matrix.setIdentityM(vmMat,0);
+        Matrix.translateM(vmMat,0, 0.34f+bobX, -0.26f+bobY+rT*0.04f, -0.62f+rT*0.10f);
+        Matrix.rotateM(vmMat,0,-6,0,1,0);
+        Matrix.rotateM(vmMat,0, 4,1,0,0);
+        drawWeaponParts(vmMat, viewModProj, currentWeapon);
+    }
+
+    // ─── Held weapon (TPP right hand) ─────────────────────────────────────────
+    private void drawHeldWeapon(float rightArmSwing, int wt){
+        System.arraycopy(charMat,0,wBase,0,16);
+        Matrix.translateM(wBase,0, ARM_OX, SHOULDER_Y, 0);
+        Matrix.rotateM(wBase,0,rightArmSwing,1,0,0);
+        Matrix.translateM(wBase,0, 0.02f, -ARM_LEN-0.02f, 0.06f);
+        Matrix.rotateM(wBase,0,-10,1,0,0);
+        drawWeaponParts(wBase, vp, wt);
+    }
+
+    /** Shared geometry — vp can be world VP (TPP) or viewmodel projection (FPP). */
+    private void drawWeaponParts(float[] base, float[] vpp, int wt){
+        switch (wt){
+            case WEAPON_AK47:
+                wp(base,vpp, 0f,    0.03f,  0.25f, 0.026f,0.026f,0.40f, C_METAL_D); // barrel
+                wp(base,vpp, 0f,    0.07f,  0.14f, 0.012f,0.012f,0.22f, C_METAL_D); // gas tube
+                wp(base,vpp, 0f,    0.03f,  0f,    0.052f,0.060f,0.18f, C_METAL_M); // receiver
+                wp(base,vpp, 0f,   -0.08f,  0.06f, 0.032f,0.11f, 0.040f,C_METAL_D); // mag
+                wp(base,vpp, 0f,   -0.01f, -0.18f, 0.043f,0.050f,0.18f, C_WOOD);    // stock
+                wp(base,vpp, 0f,   -0.09f, -0.06f, 0.028f,0.090f,0.035f,C_GRIP);    // grip
+                wp(base,vpp, 0f,    0.03f,  0.43f, 0.032f,0.030f,0.042f,C_METAL_D); // muzzle
+                break;
+            case WEAPON_GLOCK:
+                wp(base,vpp, 0f,    0.02f,  0.07f, 0.040f,0.042f,0.13f, C_METAL_D); // slide
+                wp(base,vpp, 0f,   -0.015f, 0.05f, 0.042f,0.048f,0.13f, C_METAL_M); // frame
+                wp(base,vpp, 0f,    0.020f, 0.18f, 0.020f,0.020f,0.020f,C_METAL_M); // barrel tip
+                wp(base,vpp, 0f,   -0.085f, 0.02f, 0.040f,0.086f,0.040f,C_GRIP);    // grip
+                wp(base,vpp, 0f,   -0.130f, 0.02f, 0.042f,0.015f,0.042f,C_METAL_D); // mag base
+                break;
+            case WEAPON_SNIPER:
+                wp(base,vpp, 0f,    0.01f,  0.42f, 0.022f,0.022f,0.55f, C_METAL_D); // long barrel
+                wp(base,vpp, 0f,    0.09f,  0.12f, 0.025f,0.028f,0.18f, C_SCOPE);   // scope body
+                wp(base,vpp, 0f,    0.09f,  0.20f, 0.038f,0.038f,0.012f,C_METAL_D); // scope lens
+                wp(base,vpp, 0f,    0.01f, -0.02f, 0.052f,0.062f,0.20f, C_METAL_M); // receiver
+                wp(base,vpp, 0f,   -0.01f, -0.22f, 0.040f,0.050f,0.22f, C_WOOD);    // stock
+                wp(base,vpp, 0f,   -0.085f,-0.04f, 0.028f,0.085f,0.036f,C_GRIP);    // grip
+                wp(base,vpp,-0.04f,-0.065f, 0.30f, 0.010f,0.075f,0.010f,C_METAL_D); // bipod L
+                wp(base,vpp, 0.04f,-0.065f, 0.30f, 0.010f,0.075f,0.010f,C_METAL_D); // bipod R
+                break;
+            case WEAPON_SHOTGUN:
+                wp(base,vpp, 0f,    0.01f,  0.24f, 0.038f,0.038f,0.32f, C_METAL_M); // barrel
+                wp(base,vpp, 0f,   -0.006f, 0.17f, 0.027f,0.027f,0.26f, C_METAL_D); // tube mag
+                wp(base,vpp, 0f,   -0.002f, 0.13f, 0.048f,0.035f,0.10f, C_WOOD);    // pump
+                wp(base,vpp, 0f,    0.00f, -0.01f, 0.058f,0.068f,0.18f, C_METAL_M); // receiver
+                wp(base,vpp, 0f,   -0.01f, -0.20f, 0.046f,0.058f,0.19f, C_WOOD);    // stock
+                wp(base,vpp, 0f,   -0.085f,-0.04f, 0.036f,0.090f,0.038f,C_GRIP);    // grip
+                break;
+            case WEAPON_SMG:
+                wp(base,vpp, 0f,    0.01f,  0.20f, 0.024f,0.024f,0.22f, C_METAL_D); // barrel
+                wp(base,vpp, 0f,    0.00f,  0.00f, 0.052f,0.062f,0.20f, C_METAL_M); // receiver
+                wp(base,vpp, 0f,   -0.10f,  0.05f, 0.030f,0.13f, 0.036f,C_METAL_D); // mag
+                wp(base,vpp, 0f,   -0.08f,  0.05f, 0.036f,0.086f,0.038f,C_GRIP);    // grip
+                wp(base,vpp, 0f,   -0.08f,  0.16f, 0.028f,0.070f,0.030f,C_METAL_D); // foregrip
+                wp(base,vpp, 0f,    0.00f, -0.12f, 0.038f,0.042f,0.11f, C_METAL_D); // folded stock
+                break;
+        }
+    }
+
+    private void wp(float[] base, float[] vpp, float ox,float oy,float oz, float sx,float sy,float sz, float[] col){
+        System.arraycopy(base,0,wTemp,0,16);
+        Matrix.translateM(wTemp,0,ox,oy,oz);
+        Matrix.scaleM(wTemp,0,sx,sy,sz);
+        Matrix.multiplyMM(wMvp,0,vpp,0,wTemp,0);
+        cube.draw(program,wMvp,col);
+    }
+
+    // ─── Part helpers ─────────────────────────────────────────────────────────
+    /** Static cube: base at (ox,oy,oz) in char-local space, extends up by 1.8*sy. */
+    private void part(float ox,float oy,float oz,float sx,float sy,float sz,float[] col){
+        System.arraycopy(charMat,0,partMat,0,16);
+        Matrix.translateM(partMat,0,ox,oy,oz);
+        Matrix.scaleM(partMat,0,sx,sy,sz);
+        Matrix.multiplyMM(mvp,0,vp,0,partMat,0);
+        cube.draw(program,mvp,col);
+    }
+
+    /** Swinging part — cube pivots at (ox,pivotY,oz), hangs DOWN by 1.8*sy. */
+    private void swingPart(float ox,float pivotY,float oz,float deg,float sx,float sy,float sz,float[] col){
+        System.arraycopy(charMat,0,partMat,0,16);
+        Matrix.translateM(partMat,0,ox,pivotY,oz);
+        Matrix.rotateM(partMat,0,deg,1,0,0);
+        Matrix.scaleM(partMat,0,sx,-sy,sz);
+        Matrix.multiplyMM(mvp,0,vp,0,partMat,0);
+        cube.draw(program,mvp,col);
+    }
+
+    /** Swinging box at TIPS of limbs — pivots at (ox,pivotY,oz), offset by tipOff, hangs DOWN by 1.8*sy. */
+    private void swingBox(float ox,float pivotY,float oz,float deg,float tipOff,float sx,float sy,float sz,float[] col){
+        System.arraycopy(charMat,0,partMat,0,16);
+        Matrix.translateM(partMat,0,ox,pivotY,oz);
+        Matrix.rotateM(partMat,0,deg,1,0,0);
+        Matrix.translateM(partMat,0,0,-tipOff,0);
+        Matrix.scaleM(partMat,0,sx,-sy,sz);
+        Matrix.multiplyMM(mvp,0,vp,0,partMat,0);
+        cube.draw(program,mvp,col);
+    }
+
+    private int shader(int type,String src){
+        int s=GLES20.glCreateShader(type); GLES20.glShaderSource(s,src); GLES20.glCompileShader(s); return s;
+    }
+
+    /** Ruins map: punch holes in layer1, add walls and debris on layer2. */
+    private void initRuins(){
+        layer2=new boolean[gridSize*2][gridSize*2];
+        // Craters / holes in ground
+        for(int x=0;x<gridSize*2;x++) for(int z=0;z<gridSize*2;z++)
+            if(rnd.nextFloat()<0.20f) blocks[x][z]=false;
+        // Wall segments
+        for(int w=0;w<22;w++){
+            int sx2=rnd.nextInt(gridSize*2), sz2=rnd.nextInt(gridSize*2);
+            boolean hz=rnd.nextBoolean();
+            int len=3+rnd.nextInt(7);
+            for(int i=0;i<len;i++){
+                int nx=hz?sx2+i:sx2, nz=hz?sz2:sz2+i;
+                if(nx>=0&&nx<gridSize*2&&nz>=0&&nz<gridSize*2){
+                    blocks[nx][nz]=true;
+                    layer2[nx][nz]=true;
                 }
             }
-
-            bot.x += moveX * BOT_MOVE_SPEED;
-            bot.z += moveZ * BOT_MOVE_SPEED;
-            if (moving) {
-                bot.yaw = (float) Math.atan2(moveX, -moveZ);
-                bot.walkPhase += WALK_CYCLE_RATE;
+        }
+        // Debris piles (2x2 and 3x3)
+        for(int d=0;d<20;d++){
+            int cs=1+rnd.nextInt(2);
+            int cx=rnd.nextInt(gridSize*2-cs), cz=rnd.nextInt(gridSize*2-cs);
+            for(int dx=0;dx<cs;dx++) for(int dz=0;dz<cs;dz++){
+                int nx=cx+dx, nz=cz+dz;
+                blocks[nx][nz]=true;
+                if(rnd.nextFloat()<0.75f) layer2[nx][nz]=true;
             }
         }
     }
-
-    /** Shared by the player (TPP) and every bot — position/orientation/colors differ, geometry doesn't. */
-    private void drawCharacterModel(float x, float y, float z, float facingYaw, float modelWalkPhase,
-                                     float[] shirtColor, boolean isPlayer) {
-        float bob = (float) Math.sin(animTime * IDLE_BOB_RATE) * IDLE_BOB_AMOUNT;
-
-        Matrix.setIdentityM(characterMatrix, 0);
-        Matrix.translateM(characterMatrix, 0, x, y + bob, z);
-        Matrix.rotateM(characterMatrix, 0, (float) Math.toDegrees(facingYaw), 0f, 1f, 0f);
-
-        float swing = (float) Math.sin(modelWalkPhase);
-        float legSwingDeg = swing * MAX_LEG_SWING_DEG;
-        float armSwingDeg = swing * MAX_ARM_SWING_DEG;
-
-        drawSwingingPart(0.18f, LEG_HIP_Y, 0f, legSwingDeg, 0.15f, LEG_SCALE_LEN, 0.15f, PANTS_COLOR);
-        drawSwingingPart(-0.18f, LEG_HIP_Y, 0f, -legSwingDeg, 0.15f, LEG_SCALE_LEN, 0.15f, PANTS_COLOR);
-        drawSwingingSpherePart(0.18f, LEG_HIP_Y, 0f, legSwingDeg, LEG_FOOT_OFFSET, 0.16f, PANTS_COLOR);
-        drawSwingingSpherePart(-0.18f, LEG_HIP_Y, 0f, -legSwingDeg, LEG_FOOT_OFFSET, 0.16f, PANTS_COLOR);
-
-        drawPart(0f, TORSO_OY, 0f, 0.4f, 0.55f, 0.25f, shirtColor);
-
-        drawSwingingPart(0.5f, ARM_SHOULDER_Y, 0f, -armSwingDeg, 0.12f, ARM_SCALE_LEN, 0.12f, shirtColor);
-        drawSwingingPart(-0.5f, ARM_SHOULDER_Y, 0f, armSwingDeg, 0.12f, ARM_SCALE_LEN, 0.12f, shirtColor);
-        drawSwingingSpherePart(0.5f, ARM_SHOULDER_Y, 0f, -armSwingDeg, ARM_HAND_OFFSET, 0.14f, SKIN_COLOR);
-        drawSwingingSpherePart(-0.5f, ARM_SHOULDER_Y, 0f, armSwingDeg, ARM_HAND_OFFSET, 0.14f, SKIN_COLOR);
-
-        drawSpherePart(0f, ARM_SHOULDER_Y + HEAD_RADIUS + 0.08f, 0f, HEAD_RADIUS, SKIN_COLOR);
-
-        drawHeldWeapon(-armSwingDeg, isPlayer ? currentWeapon : WEAPON_RIFLE);
-
-        if (isPlayer && thrustHeld && fuel > 0f) {
-            drawJetpackFlames();
-        }
-    }
-
-    private void drawJetpackFlames() {
-        float flicker = 0.7f + 0.3f * (float) Math.sin(animTime * 0.9f);
-        float[] flame = {FLAME_COLOR[0], FLAME_COLOR[1] * flicker, FLAME_COLOR[2], 1f};
-        drawPart(0.18f, -0.12f, 0f, 0.07f, 0.10f * flicker, 0.07f, flame);
-        drawPart(-0.18f, -0.12f, 0f, 0.07f, 0.10f * flicker, 0.07f, flame);
-    }
-
-    private void drawHeldWeapon(float rightArmSwingDeg, int weaponType) {
-        System.arraycopy(characterMatrix, 0, weaponBaseMatrix, 0, 16);
-        Matrix.translateM(weaponBaseMatrix, 0, 0.5f, ARM_SHOULDER_Y, 0f);
-        Matrix.rotateM(weaponBaseMatrix, 0, rightArmSwingDeg, 1f, 0f, 0f);
-        Matrix.translateM(weaponBaseMatrix, 0, 0.02f, -ARM_HAND_OFFSET - 0.03f, 0.05f);
-        drawWeaponParts(weaponBaseMatrix, vpMatrix, weaponType);
-    }
-
-    private void drawViewmodel() {
-        long sinceFire = SystemClock.uptimeMillis() - lastFireUptimeMs;
-        float recoilT = sinceFire < RECOIL_DURATION_MS ? 1f - (sinceFire / (float) RECOIL_DURATION_MS) : 0f;
-        float recoilKickZ = recoilT * 0.10f;
-        float recoilLiftY = recoilT * 0.04f;
-
-        float bobX = (float) Math.sin(animTime * IDLE_BOB_RATE * 0.6f) * 0.01f;
-        float bobY = (float) Math.cos(animTime * IDLE_BOB_RATE * 0.6f) * 0.008f;
-
-        Matrix.setIdentityM(viewmodelMatrix, 0);
-        Matrix.translateM(viewmodelMatrix, 0,
-                0.34f + bobX,
-                -0.26f + bobY + recoilLiftY,
-                -0.62f + recoilKickZ);
-        Matrix.rotateM(viewmodelMatrix, 0, -6f, 0f, 1f, 0f);
-        Matrix.rotateM(viewmodelMatrix, 0, 4f, 1f, 0f, 0f);
-
-        drawWeaponParts(viewmodelMatrix, projectionMatrix, currentWeapon);
-    }
-
-    private void drawWeaponParts(float[] baseMatrix, float[] vp, int weaponType) {
-        if (weaponType == WEAPON_PISTOL) {
-            drawWeaponPart(baseMatrix, vp, 0f, 0f, 0.05f, 0.045f, 0.045f, 0.16f, METAL_MID);
-            drawWeaponPart(baseMatrix, vp, 0f, -0.08f, -0.04f, 0.035f, 0.09f, 0.045f, GRIP_COLOR);
-        } else {
-            drawWeaponPart(baseMatrix, vp, 0f, 0.02f, 0.18f, 0.03f, 0.03f, 0.30f, METAL_DARK);
-            drawWeaponPart(baseMatrix, vp, 0f, 0.0f, -0.02f, 0.06f, 0.07f, 0.20f, METAL_MID);
-            drawWeaponPart(baseMatrix, vp, 0f, -0.01f, -0.20f, 0.045f, 0.05f, 0.14f, METAL_DARK);
-            drawWeaponPart(baseMatrix, vp, 0f, -0.14f, 0.02f, 0.03f, 0.13f, 0.045f, METAL_DARK);
-            drawWeaponPart(baseMatrix, vp, 0f, -0.08f, -0.08f, 0.03f, 0.08f, 0.04f, GRIP_COLOR);
-        }
-    }
-
-    private void drawWeaponPart(float[] baseMatrix, float[] vp, float ox, float oy, float oz,
-                                 float sx, float sy, float sz, float[] color) {
-        System.arraycopy(baseMatrix, 0, weaponTempMatrix, 0, 16);
-        Matrix.translateM(weaponTempMatrix, 0, ox, oy, oz);
-        Matrix.scaleM(weaponTempMatrix, 0, sx, sy, sz);
-        Matrix.multiplyMM(weaponMvpTemp, 0, vp, 0, weaponTempMatrix, 0);
-        cube.draw(program, weaponMvpTemp, color);
-    }
-
-    private void drawPart(float ox, float oy, float oz, float sx, float sy, float sz, float[] color) {
-        System.arraycopy(characterMatrix, 0, partMatrix, 0, 16);
-        Matrix.translateM(partMatrix, 0, ox, oy, oz);
-        Matrix.scaleM(partMatrix, 0, sx, sy, sz);
-        Matrix.multiplyMM(mvpMatrix, 0, vpMatrix, 0, partMatrix, 0);
-        cube.draw(program, mvpMatrix, color);
-    }
-
-    private void drawSpherePart(float ox, float oy, float oz, float radius, float[] color) {
-        System.arraycopy(characterMatrix, 0, partMatrix, 0, 16);
-        Matrix.translateM(partMatrix, 0, ox, oy, oz);
-        Matrix.scaleM(partMatrix, 0, radius, radius, radius);
-        Matrix.multiplyMM(mvpMatrix, 0, vpMatrix, 0, partMatrix, 0);
-        sphere.draw(program, mvpMatrix, color);
-    }
-
-    private void drawSwingingPart(float ox, float pivotY, float oz, float swingDegrees,
-                                   float sx, float sy, float sz, float[] color) {
-        System.arraycopy(characterMatrix, 0, partMatrix, 0, 16);
-        Matrix.translateM(partMatrix, 0, ox, pivotY, oz);
-        Matrix.rotateM(partMatrix, 0, swingDegrees, 1f, 0f, 0f);
-        Matrix.scaleM(partMatrix, 0, sx, -sy, sz);
-        Matrix.multiplyMM(mvpMatrix, 0, vpMatrix, 0, partMatrix, 0);
-        cube.draw(program, mvpMatrix, color);
-    }
-
-    private void drawSwingingSpherePart(float ox, float pivotY, float oz, float swingDegrees,
-                                         float tipOffsetY, float radius, float[] color) {
-        System.arraycopy(characterMatrix, 0, partMatrix, 0, 16);
-        Matrix.translateM(partMatrix, 0, ox, pivotY, oz);
-        Matrix.rotateM(partMatrix, 0, swingDegrees, 1f, 0f, 0f);
-        Matrix.translateM(partMatrix, 0, 0f, -tipOffsetY, 0f);
-        Matrix.scaleM(partMatrix, 0, radius, radius, radius);
-        Matrix.multiplyMM(mvpMatrix, 0, vpMatrix, 0, partMatrix, 0);
-        sphere.draw(program, mvpMatrix, color);
-    }
-
-    private int compileShader(int type, String src) {
-        int shader = GLES20.glCreateShader(type);
-        GLES20.glShaderSource(shader, src);
-        GLES20.glCompileShader(shader);
-        return shader;
-    }
 }
-
