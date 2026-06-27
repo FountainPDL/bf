@@ -5,8 +5,14 @@ Run from ~/bf:
   python3 gen_mesh_data.py \
     ~/storage/downloads/tripo_convert_ea237646-20d8-47e2-be62-ae6c9ebd536e.obj \
     ~/storage/downloads/tripo_convert_9c4f327c-63ce-4e52-9a72-128f2fd3fc42.obj \
-    ~/storage/downloads/tripo_model_basecolor.JPEG
-The third argument (texture) is optional but recommended.
+    ~/storage/downloads/tripo_model_basecolor.JPEG \
+    "~/storage/downloads/tripo_model_basecolor(1).JPEG"
+
+Args:
+  1  operator OBJ
+  2  ruins OBJ
+  3  ruins texture     (tripo_model_basecolor.JPEG)
+  4  operator texture  (tripo_model_basecolor(1).JPEG)  — optional
 """
 import sys, os, shutil
 
@@ -35,8 +41,6 @@ def bake(path, class_name, scale, keep_every, out_dir):
                 faces.append(tri)
 
     kept = [f for i, f in enumerate(faces) if i % keep_every == 0]
-
-    # FIX: was `vmap,pos,uvs,idx={},{},{},[],[]` — 5 values, 4 variables
     vmap, pos_l, uv_l, idx = {}, [], [], []
 
     for tri in kept:
@@ -48,7 +52,6 @@ def bake(path, class_name, scale, keep_every, out_dir):
                 uv_l.append(raw_vt[vti] if 0 <= vti < len(raw_vt) else (0.5, 0.5))
             idx.append(vmap[k])
 
-    # Build interleaved x,y,z,u,v
     verts = []
     for p2, u in zip(pos_l, uv_l):
         verts.extend([p2[0], p2[1], p2[2], u[0], u[1]])
@@ -86,14 +89,35 @@ def bake(path, class_name, scale, keep_every, out_dir):
     print(f'  → {out}: {len(pos_l)} verts, {len(idx)//3} tris')
 
 
+def copy_texture(src, dest_name):
+    assets = 'app/src/main/assets'
+    os.makedirs(assets, exist_ok=True)
+    out = os.path.join(assets, dest_name)
+    try:
+        from PIL import Image
+        import io
+        img = Image.open(src).resize((512, 512))
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG', quality=72)
+        with open(out, 'wb') as f:
+            f.write(buf.getvalue())
+        print(f'  Texture 512×512 → {out} ({len(buf.getvalue())//1024}KB)')
+    except ImportError:
+        shutil.copy(src, out)
+        print(f'  Texture copied → {out}')
+    except Exception as e:
+        print(f'  Warning — texture: {e}')
+
+
 if __name__ == '__main__':
     if len(sys.argv) < 3:
         print(__doc__)
         sys.exit(1)
 
-    op_obj = sys.argv[1]
-    ru_obj = sys.argv[2]
-    tex    = sys.argv[3] if len(sys.argv) > 3 else None
+    op_obj       = sys.argv[1]
+    ru_obj       = sys.argv[2]
+    ruins_tex    = sys.argv[3] if len(sys.argv) > 3 else None
+    operator_tex = sys.argv[4] if len(sys.argv) > 4 else None
 
     out_dir = 'app/src/main/java/com/fountainpdl/blockfront'
     os.makedirs(out_dir, exist_ok=True)
@@ -104,25 +128,14 @@ if __name__ == '__main__':
     print('Baking RuinsMeshData ...')
     bake(ru_obj, 'RuinsMeshData',    scale=18.0, keep_every=14, out_dir=out_dir)
 
-    if tex:
-        assets = 'app/src/main/assets'
-        os.makedirs(assets, exist_ok=True)
-        out_tex = os.path.join(assets, 'ruins_tex.jpg')
-        try:
-            from PIL import Image
-            import io
-            img = Image.open(tex).resize((512, 512))
-            buf = io.BytesIO()
-            img.save(buf, format='JPEG', quality=72)
-            with open(out_tex, 'wb') as f:
-                f.write(buf.getvalue())
-            print(f'Texture resized → {out_tex} ({len(buf.getvalue())//1024}KB)')
-        except ImportError:
-            shutil.copy(tex, out_tex)
-            print(f'Texture copied (Pillow not installed) → {out_tex}')
-        except Exception as e:
-            print(f'Warning: texture copy failed: {e}')
+    if ruins_tex:
+        print('Copying ruins texture ...')
+        copy_texture(ruins_tex, 'ruins_tex.jpg')
+
+    if operator_tex:
+        print('Copying operator texture ...')
+        copy_texture(operator_tex, 'operator_tex.jpg')
 
     print()
     print('Done! Now run:')
-    print('  git add -A && git commit -m "Add OBJ mesh data" && git push')
+    print('  git add -A && git commit -m "Add OBJ mesh data + textures" && git push')
