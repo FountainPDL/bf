@@ -474,6 +474,14 @@ public class GameRenderer implements GLSurfaceView.Renderer {
         program=GLES20.glCreateProgram();
         GLES20.glAttachShader(program,vs); GLES20.glAttachShader(program,fs); GLES20.glLinkProgram(program);
         cube=new VoxelCube();
+        if (mapIdx==3) {
+            try {
+                ruinsMesh   = ObjMesh.fromAsset(appCtx, "ruins.bin");
+                ruinsShader = new TexturedShader(appCtx, "ruins_tex.jpg");
+            } catch (Exception ignored) {
+                // ruins.bin not in assets yet — procedural layer2 used instead
+            }
+        }
     }
 
     @Override public void onSurfaceChanged(GL10 gl, int w, int h){
