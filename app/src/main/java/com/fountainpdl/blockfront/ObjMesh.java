@@ -101,3 +101,4 @@ public class ObjMesh {
         GLES20.glDisableVertexAttribArray(aPos);
     }
 }
+

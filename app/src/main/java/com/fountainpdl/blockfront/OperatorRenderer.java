@@ -132,3 +132,4 @@ public class OperatorRenderer implements GLSurfaceView.Renderer {
         int p=GLES20.glCreateProgram();GLES20.glAttachShader(p,vs);GLES20.glAttachShader(p,fs);GLES20.glLinkProgram(p);return p;}
     private static int sh(int t,String s){int sh=GLES20.glCreateShader(t);GLES20.glShaderSource(sh,s);GLES20.glCompileShader(sh);return sh;}
 }
+

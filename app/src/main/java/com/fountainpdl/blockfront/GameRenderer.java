@@ -210,6 +210,7 @@ public class GameRenderer implements GLSurfaceView.Renderer {
     private String pickupMsg = "";
 
     // ─── Animation ─────────────────────────────────────────────────────────────
+    private final Context appCtx;
     private float walkPhase = 0f;
     private float animTime  = 0f;
 
@@ -221,6 +222,8 @@ public class GameRenderer implements GLSurfaceView.Renderer {
     private final int mapIdx;
     private final boolean[][] blocks;
     private boolean[][] layer2;  // ruins: second block layer for walls/debris
+    private ObjMesh ruinsMesh;          // null until gen_mesh_data.py is run
+    private TexturedShader ruinsShader; // textured shader for ruins OBJ
     private static final float[] C_RUIN2={0.16f,0.14f,0.13f,1f}; // darker ruins wall
     private final float[][][] cellColor;
 
@@ -251,6 +254,7 @@ public class GameRenderer implements GLSurfaceView.Renderer {
 
     // ──────────────────────────────────────────────────────────────────────────
     public GameRenderer(Context ctx, String mode, String mapId) {
+        appCtx           = ctx;
         demolitionMode   = "demolition".equals(mode);
         battleRoyaleMode = "battleroyale".equals(mode);
         ffaMode          = "ffa".equals(mode);
@@ -474,6 +478,7 @@ public class GameRenderer implements GLSurfaceView.Renderer {
         program=GLES20.glCreateProgram();
         GLES20.glAttachShader(program,vs); GLES20.glAttachShader(program,fs); GLES20.glLinkProgram(program);
         cube=new VoxelCube();
+        // Load ruins OBJ mesh if gen_mesh_data.py has been run
         if (mapIdx==3) {
             try {
                 ruinsMesh   = ObjMesh.fromAsset(appCtx, "ruins.bin");
@@ -571,6 +576,25 @@ public class GameRenderer implements GLSurfaceView.Renderer {
             Matrix.translateM(mdl,0,x*2f,1.8f,z*2f);
             Matrix.multiplyMM(mvp,0,vp,0,mdl,0);
             cube.draw(program,mvp,C_RUIN2);
+        }
+
+        // ── Ruins OBJ overlay (renders when ruins.bin asset exists) ──
+        if (ruinsMesh != null) {
+            float[] objMvp = new float[16];
+            float[] objM   = new float[16];
+            Matrix.setIdentityM(objM,0);
+            // OBJ scale=18 → fits in gridSize*2 world units; Y offset to ground level
+            Matrix.translateM(objM,0, 0f, GROUND_Y, 0f);
+            Matrix.multiplyMM(objMvp,0,vp,0,objM,0);
+            float[] ruinsTint = {0.80f,0.78f,0.76f,1f};
+            if (ruinsShader != null) {
+                ruinsShader.bind(ruinsTint);
+                ruinsMesh.drawTextured(ruinsShader.getProgram(), objMvp);
+            } else {
+                GLES20.glUseProgram(program);
+                ruinsMesh.drawFlat(program, objMvp, C_RUIN2);
+                GLES20.glUseProgram(program); // restore
+            }
         }
 
         // ── Loot cubes ──
@@ -863,3 +887,4 @@ public class GameRenderer implements GLSurfaceView.Renderer {
         }
     }
 }
+
