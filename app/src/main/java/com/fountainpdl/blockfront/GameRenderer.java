@@ -56,7 +56,7 @@ public class GameRenderer implements GLSurfaceView.Renderer {
     private static final float MIN_FUEL_HOP =  10.0f;
 
     // ─── Camera ────────────────────────────────────────────────────────────────
-    private static final float EYE_H       = 4.0f;
+    private static final float EYE_H       = 2.2f; // above GROUND_Y → world y≈4.0
     private static final float TPP_DIST    = 6.0f;
     private static final float TPP_PIVOT_H = 1.8f;
     private static final float TPP_VOFF    = 1.5f;
@@ -584,7 +584,7 @@ public class GameRenderer implements GLSurfaceView.Renderer {
             float[] objM   = new float[16];
             Matrix.setIdentityM(objM,0);
             // OBJ scale=18 → fits in gridSize*2 world units; Y offset to ground level
-            Matrix.translateM(objM,0, 0f, GROUND_Y, 0f);
+            Matrix.translateM(objM,0, 0f, 0.9f, 0f); // ruins centre slightly above ground
             Matrix.multiplyMM(objMvp,0,vp,0,objM,0);
             float[] ruinsTint = {0.80f,0.78f,0.76f,1f};
             if (ruinsShader != null) {

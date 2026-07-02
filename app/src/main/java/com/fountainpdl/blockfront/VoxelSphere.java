@@ -71,15 +71,15 @@ public class VoxelSphere {
     }
 
     public void draw(int program, float[] mvpMatrix, float[] color) {
-        int posHandle = GLES20.glGetAttribLocation(program, "vPosition");
+        int posHandle = GLES20.glGetAttribLocation(program, "vPos");
         GLES20.glEnableVertexAttribArray(posHandle);
         GLES20.glVertexAttribPointer(posHandle, 3, GLES20.GL_FLOAT, false, 12, vertexBuffer);
 
-        int colorHandle = GLES20.glGetAttribLocation(program, "vColor");
+        int colorHandle = GLES20.glGetAttribLocation(program, "vCol");
         GLES20.glDisableVertexAttribArray(colorHandle);
         GLES20.glVertexAttrib4fv(colorHandle, color, 0);
 
-        int mvpHandle = GLES20.glGetUniformLocation(program, "uMVPMatrix");
+        int mvpHandle = GLES20.glGetUniformLocation(program, "uMVP");
         GLES20.glUniformMatrix4fv(mvpHandle, 1, false, mvpMatrix, 0);
 
         GLES20.glDrawElements(GLES20.GL_TRIANGLES, indexCount, GLES20.GL_UNSIGNED_SHORT, indexBuffer);
